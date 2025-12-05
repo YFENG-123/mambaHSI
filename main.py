@@ -31,8 +31,8 @@ print(
 
 ################################# 设置超参数 #################################
 num_epochs = 1000  # 训练轮数
-learning_rate = 0.001
-dataset_splited_mode = "None"
+learning_rate = 0.0001
+dropout_rate = 0.3
 image_path = "data/Indian_pines.mat"
 gt_path = "data/Indian_pines_gt.mat"
 val_split_rate = 0.45
@@ -56,7 +56,13 @@ test_split_rate = 0.45
     test_split_rate=test_split_rate,
 )
 ################################# 初始化模型 ################################
-model = Mamba2HSIClassifier(num_classes=num_classes, bands=bands).to("cuda")
+model = Mamba2HSIClassifier(
+    image_x=image_x,
+    image_y=image_y,
+    num_classes=num_classes,
+    bands=bands,
+    dropout_rate=dropout_rate,
+).to("cuda")
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
@@ -78,8 +84,8 @@ for epoch in range(num_epochs):
         full_test_label,
     ) = run_step(model, train_loader, criterion, optimizer, "train")  # 运行训练集
     print(f"Train -> Loss: {avg_train_loss:.4f}, Accuracy: {train_acc:.2f}%")
-    writer.add_scalars("Loss", {"Train": avg_train_loss}, epoch + 1)  # 写入TensorBoard
-    writer.add_scalars("Accuracy", {"Train": train_acc}, epoch + 1)  # 写入TensorBoard
+    writer.add_scalars(f"Loss{timestamp}", {"Train": avg_train_loss}, epoch + 1)  # 写入TensorBoard
+    writer.add_scalars(f"Accuracy{timestamp}", {"Train": train_acc}, epoch + 1)  # 写入TensorBoard
 
     # ================================== 验证阶段 =================================
     if val_split_rate > 0:
@@ -92,8 +98,8 @@ for epoch in range(num_epochs):
             full_test_label,
         ) = run_step(model, val_loader, criterion, optimizer, "val")  # 运行验证集
         print(f"Val   -> Loss: {avg_val_loss:.4f}, Accuracy: {val_acc:.2f}%")
-        writer.add_scalars("Loss", {"Val": avg_val_loss}, epoch + 1)  # 写入TensorBoard
-        writer.add_scalars("Accuracy", {"Val": val_acc}, epoch + 1)  # 写入TensorBoard
+        writer.add_scalars(f"Loss{timestamp}", {"Val": avg_val_loss}, epoch + 1)  # 写入TensorBoard
+        writer.add_scalars(f"Accuracy{timestamp}", {"Val": val_acc}, epoch + 1)  # 写入TensorBoard
 
         if avg_val_loss < best_loss:  # 保存最佳模型
             best_loss = avg_val_loss
@@ -126,10 +132,11 @@ oa, aa, kappa, confusion_matrix = calculate_result(
     all_test_predictions,
     all_test_label_masked,
     num_classes,
+    timestamp,
 )
-writer.add_scalars("result", {"OA": oa}, num_classes + 2)
-writer.add_scalars("result", {"AA": aa}, num_classes + 1)
-writer.add_scalars("result", {"Kappa": kappa}, num_classes + 3)
+writer.add_scalars(f"result{timestamp}", {"OA": oa}, num_classes + 2)
+writer.add_scalars(f"result{timestamp}", {"AA": aa}, num_classes + 1)
+writer.add_scalars(f"result{timestamp}", {"Kappa": kappa}, num_classes + 3)
 print("最终测试结果:")
 print(f"测试集 Loss: {avg_test_loss:.4f}")
 print(f"测试集 OA: {oa:.2f}%")

@@ -9,8 +9,8 @@ import matplotlib.pyplot as plt
 def load_data(
     image_path,
     gt_path,
-    val_split_rate=0.1,
-    test_split_rate=0.1,
+    val_split_rate=0.0,
+    test_split_rate=0.9,
 ):
     # 加载image
     image_dict = sio.loadmat(image_path)
@@ -65,11 +65,13 @@ def load_data(
     train_label = gt.unsqueeze(0)
     train_dataset = TensorDataset(image, train_label, train_mask)
     train_loader = DataLoader(
-        dataset=train_dataset, 
+        dataset=train_dataset,
         batch_size=1,
         shuffle=False,  # 确保数据顺序固定
         num_workers=0,  # 设置为0以避免多进程随机性
-        generator=torch.Generator().manual_seed(42) if torch.cuda.is_available() else None
+        generator=torch.Generator().manual_seed(42)
+        if torch.cuda.is_available()
+        else None,
     )
 
     val_mask = np.zeros(gt_flatten.shape)
@@ -81,11 +83,13 @@ def load_data(
     val_label = gt.unsqueeze(0)
     val_dataset = TensorDataset(image, val_label, val_mask)
     val_loader = DataLoader(
-        dataset=val_dataset, 
+        dataset=val_dataset,
         batch_size=1,
         shuffle=False,
         num_workers=0,
-        generator=torch.Generator().manual_seed(42) if torch.cuda.is_available() else None
+        generator=torch.Generator().manual_seed(42)
+        if torch.cuda.is_available()
+        else None,
     )
 
     test_mask = np.zeros(gt_flatten.shape)
@@ -97,11 +101,13 @@ def load_data(
     test_label = gt.unsqueeze(0)
     test_dataset = TensorDataset(image, test_label, test_mask)
     test_loader = DataLoader(
-        dataset=test_dataset, 
+        dataset=test_dataset,
         batch_size=1,
         shuffle=False,
         num_workers=0,
-        generator=torch.Generator().manual_seed(42) if torch.cuda.is_available() else None
+        generator=torch.Generator().manual_seed(42)
+        if torch.cuda.is_available()
+        else None,
     )
 
     # 注意：Indian Pines 等数据集的标签通常是 0 表示背景，1~max_label 表示类别，
@@ -208,6 +214,7 @@ def calculate_result(
     all_test_predictions,
     all_test_label_masked,
     num_classes,
+    timestamp,
 ):
     # 1)计算打印记录（OA）
     oa = test_accuracy
@@ -225,7 +232,7 @@ def calculate_result(
             f"  类别 {class_id}: 精度 {acc_c:.2f}% ({classified_label_mask.sum()} 个样本)"
         )
         # 在循环中直接写入 TensorBoard
-        writer.add_scalars("result", {f"class_{class_id}": acc_c}, class_id)
+        writer.add_scalars(f"result{timestamp}", {f"class_{class_id}": acc_c}, class_id)
     aa = float(np.mean(class_accuracies))
 
     # 3) Kappa：基于混淆矩阵（包含背景类 0）
