@@ -4,6 +4,19 @@ import torch
 from torch.utils.data import TensorDataset, DataLoader
 import random
 import matplotlib.pyplot as plt
+import os
+
+
+def set_seed(seed):
+    ################################# 固定种子（确保完全可复现）#################################
+    random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # 如果使用多GPU
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    # 设置环境变量以确保完全确定性
+    os.environ["PYTHONHASHSEED"] = str(seed)
 
 
 def load_data(
@@ -129,7 +142,7 @@ def load_data(
 
 
 # 使用一个函数完成上面三个功能
-def run_step(model, loader, criterion, optimizer, mode):
+def run_model(model, loader, criterion, optimizer, mode):
     if mode == "train":
         model.train()
         return step(model, loader, criterion, optimizer, mode)
@@ -208,18 +221,17 @@ def step(model, loader, criterion, optimizer, mode):
 
 
 def calculate_result(
-    writer,
     avg_test_loss,
     test_accuracy,
     all_test_predictions,
     all_test_label_masked,
     num_classes,
-    timestamp,
 ):
     # 1)计算打印记录（OA）
     oa = test_accuracy
 
     # 2) AA：各类别精度的平均（忽略背景类 0），并输出每个类别精度
+
     class_accuracies = []
     all_predictions_np = np.concatenate(all_test_predictions, axis=0)
     all_labels_np = np.concatenate(all_test_label_masked, axis=0)
@@ -229,10 +241,8 @@ def calculate_result(
         acc_c = 100.0 * (all_predictions_np[classified_label_mask] == class_id).mean()
         class_accuracies.append(acc_c)
         print(
-            f"  类别 {class_id}: 精度 {acc_c:.2f}% ({classified_label_mask.sum()} 个样本)"
+            f"类别 {class_id}: 精度 {acc_c:.2f}% ({classified_label_mask.sum()} 个样本)"
         )
-        # 在循环中直接写入 TensorBoard
-        writer.add_scalars(f"result{timestamp}", {f"class_{class_id}": acc_c}, class_id)
     aa = float(np.mean(class_accuracies))
 
     # 3) Kappa：基于混淆矩阵（包含背景类 0）
@@ -244,11 +254,17 @@ def calculate_result(
     pe = (cm.sum(axis=0) * cm.sum(axis=1)).sum() / (total_samples**2)
     kappa = float((po - pe) / (1 - pe) * 100.0)
 
-    return oa, aa, kappa, cm
+    return oa, aa, kappa, cm, class_accuracies
 
 
 def generate_picture(
-    confusion_matrix, num_classes, prediction_map=None, test_label=None, gt=None
+    confusion_matrix,
+    num_classes,
+    prediction_map,
+    test_label,
+    gt,
+    data_name,
+    seed_idx,
 ):
     plt.rcParams["font.sans-serif"] = [
         "WenQuanYi Zen Hei"
@@ -324,7 +340,9 @@ def generate_picture(
         axes[1, 2].axis("off")
 
         plt.tight_layout()
-        prediction_result_path = "prediction_results.png"
+        prediction_result_path = os.path.join(
+            "images", data_name, f"prediction_results_{seed_idx + 1}.png"
+        )
         plt.savefig(prediction_result_path, dpi=300, bbox_inches="tight")
         print(f"分类结果可视化已保存为: {prediction_result_path}")
         plt.close()
@@ -393,7 +411,9 @@ def generate_picture(
             )
 
     plt.tight_layout()
-    confusion_matrix_path = "confusion_matrix.png"
+    confusion_matrix_path = os.path.join(
+        "images", data_name, f"confusion_matrix_{seed_idx + 1}.png"
+    )
     plt.savefig(confusion_matrix_path, dpi=300, bbox_inches="tight")
     print(f"混淆矩阵已保存为: {confusion_matrix_path}")
     plt.close()
