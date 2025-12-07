@@ -294,7 +294,7 @@ for image_path, gt_path in zip(image_paths, gt_paths):  # 遍历所有数据集
         print(f"测试集 AA: {aa:.2f}%")
         print(f"测试集 Kappa: {kappa:.2f}")
 
-        ################################# 写入TensorBoard：该次实验的 OA、AA、Kappa、训练时间 ##################################
+        ################################# 写入TensorBoard：该次实验的 OA、AA、Kappa、Performance、训练时间 ##################################
         # 合并所有数据集到单个表格，每条曲线代表一个数据集
         writer.add_scalars(
             f"OA_{timestamp}",
@@ -309,6 +309,11 @@ for image_path, gt_path in zip(image_paths, gt_paths):  # 遍历所有数据集
         writer.add_scalars(
             f"Kappa_{timestamp}",
             {data_name: kappa},
+            seed_idx + 1,  # x轴：实验序号
+        )
+        writer.add_scalars(
+            f"Performance_{timestamp}",
+            {data_name: (oa + aa + kappa) / 3.0},
             seed_idx + 1,  # x轴：实验序号
         )
         writer.add_scalars(
