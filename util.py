@@ -417,3 +417,137 @@ def generate_picture(
     plt.savefig(confusion_matrix_path, dpi=300, bbox_inches="tight")
     print(f"混淆矩阵已保存为: {confusion_matrix_path}")
     plt.close()
+
+
+def write_results_to_txt(
+    results_txt_path,
+    data_name,
+    experiment_results,
+    average_oa,
+    average_aa,
+    average_kappa,
+    average_performance,
+    average_training_time,
+    std_oa,
+    std_aa,
+    std_kappa,
+    std_performance,
+    std_training_time,
+    num_experiments,
+):
+    """
+    将实验结果以表格形式写入txt文件（以追加方式打开）
+
+    参数:
+        results_txt_path: 文件路径
+        data_name: 数据集名称
+        experiment_results: 每次实验的结果列表，每个元素包含：
+            - seed: 随机种子
+            - seed_idx: 实验序号
+            - total_training_time: 训练时间
+            - test_loss: 测试集损失
+            - oa: OA值
+            - aa: AA值
+            - kappa: Kappa值
+            - performance: 性能指标
+            - class_accuracies: 各类别精度列表
+            - best_model_loss: 最佳模型loss
+            - best_model_acc: 最佳模型accuracy
+            - best_model_epoch: 最佳模型产生的轮次
+            - best_model_type: 最佳模型类型（Train/Val）
+        average_oa, average_aa, average_kappa, average_performance, average_training_time: 平均值
+        std_oa, std_aa, std_kappa, std_performance, std_training_time: 标准差
+        num_experiments: 实验次数
+    """
+    # 以追加方式打开文件
+    results_file = open(results_txt_path, "a", encoding="utf-8")
+
+    # 写入数据集实验结果
+    results_file.write(f"\n{'=' * 120}\n")
+    results_file.write(
+        f"数据集: {data_name} - 实验结果汇总 (共{num_experiments}次实验)\n"
+    )
+    results_file.write(f"{'=' * 120}\n\n")
+
+    # 主指标表格（包含最佳模型信息）
+    results_file.write("主要指标对比表:\n")
+    results_file.write("-" * 120 + "\n")
+    results_file.write(
+        f"{'实验':<8} {'种子':<10} {'训练时间(秒)':<15} {'测试Loss':<12} {'OA(%)':<10} {'AA(%)':<10} {'Kappa':<10} {'最佳模型':<20} {'最佳轮次':<10}\n"
+    )
+    results_file.write("-" * 120 + "\n")
+    for exp_result in experiment_results:
+        best_model_info = f"{exp_result['best_model_type']} Loss:{exp_result['best_model_loss']:.4f} Acc:{exp_result['best_model_acc']:.2f}%"
+        results_file.write(
+            f"{exp_result['seed_idx']:<8} "
+            f"{exp_result['seed']:<10} "
+            f"{exp_result['total_training_time']:<15.2f} "
+            f"{exp_result['test_loss']:<12.4f} "
+            f"{exp_result['oa']:<10.2f} "
+            f"{exp_result['aa']:<10.2f} "
+            f"{exp_result['kappa']:<10.2f} "
+            f"{best_model_info:<20} "
+            f"{exp_result['best_model_epoch']:<10}\n"
+        )
+    results_file.write("-" * 120 + "\n")
+    results_file.write(
+        f"{'平均':<8} {'-':<10} "
+        f"{average_training_time:<15.2f} "
+        f"{'':<12} "
+        f"{average_oa:<10.2f} "
+        f"{average_aa:<10.2f} "
+        f"{average_kappa:<10.2f} "
+        f"{'':<20} "
+        f"{'':<10}\n"
+    )
+    results_file.write(
+        f"{'标准差':<8} {'-':<10} "
+        f"{std_training_time:<15.2f} "
+        f"{'':<12} "
+        f"{std_oa:<10.2f} "
+        f"{std_aa:<10.2f} "
+        f"{std_kappa:<10.2f} "
+        f"{'':<20} "
+        f"{'':<10}\n"
+    )
+    results_file.write("\n")
+
+    # 各类别精度表格（如果有多个类别）
+    if (
+        len(experiment_results) > 0
+        and len(experiment_results[0]["class_accuracies"]) > 0
+    ):
+        num_classes = len(experiment_results[0]["class_accuracies"])
+        results_file.write("各类别精度对比表:\n")
+        results_file.write("-" * 120 + "\n")
+        # 表头
+        header = f"{'实验':<8} {'种子':<10}"
+        for i in range(num_classes):
+            header += f" {'类别' + str(i + 1) + '(%)':<12}"
+        results_file.write(header + "\n")
+        results_file.write("-" * 120 + "\n")
+        # 每次实验的各类别精度
+        for exp_result in experiment_results:
+            row = f"{exp_result['seed_idx']:<8} {exp_result['seed']:<10}"
+            for acc in exp_result["class_accuracies"]:
+                row += f" {acc:<12.2f}"
+            results_file.write(row + "\n")
+        results_file.write("-" * 120 + "\n")
+        # 平均各类别精度
+        avg_class_acc = np.mean(
+            [exp["class_accuracies"] for exp in experiment_results], axis=0
+        )
+        std_class_acc = np.std(
+            [exp["class_accuracies"] for exp in experiment_results], axis=0
+        )
+        row_avg = f"{'平均':<8} {'-':<10}"
+        row_std = f"{'标准差':<8} {'-':<10}"
+        for avg, std in zip(avg_class_acc, std_class_acc):
+            row_avg += f" {avg:<12.2f}"
+            row_std += f" {std:<12.2f}"
+        results_file.write(row_avg + "\n")
+        results_file.write(row_std + "\n")
+        results_file.write("\n")
+
+    results_file.write(f"{'=' * 120}\n\n")
+    results_file.close()
