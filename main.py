@@ -41,6 +41,9 @@ test_split_rate = 0.90
 print(f"训练轮数:{num_epochs}\t\t学习率:{learning_rate}\t\tDropout率:{dropout_rate}")
 print(f"验证集比例:{val_split_rate}\t\t测试集比例:{test_split_rate}")
 
+################################# 记录程序开始时间 ##################################
+program_start_time = time.time()
+
 ################################# 初始化TensorBoard ##################################
 timestamp = time.strftime("%Y%m%d-%H%M%S")
 log_dir = os.path.join("logs", timestamp)
@@ -332,8 +335,8 @@ for image_path, gt_path in zip(image_paths, gt_paths):  # 遍历所有数据集
 
         ################################# 可视化该次实验测试评估的结果 ##################################
 
-        # 创建images文件夹
-        images_dir = os.path.join("images", data_name)
+        # 创建images文件夹（根据timestamp创建子目录）
+        images_dir = os.path.join("images", timestamp, data_name)
         os.makedirs(images_dir, exist_ok=True)
         # 生成图片
         generate_picture(
@@ -344,6 +347,7 @@ for image_path, gt_path in zip(image_paths, gt_paths):  # 遍历所有数据集
             gt,
             data_name,
             seed_idx,
+            images_dir=images_dir,
         )
 
     ################################# 计算该数据集所有实验的平均结果 ##################################
@@ -421,4 +425,26 @@ for image_path, gt_path in zip(image_paths, gt_paths):  # 遍历所有数据集
 
 writer.flush()
 writer.close()
+
+################################# 计算并打印程序总运行时间 ##################################
+program_end_time = time.time()
+total_program_time = program_end_time - program_start_time
+hours = int(total_program_time // 3600)
+minutes = int((total_program_time % 3600) // 60)
+seconds = total_program_time % 60
+
+# 将总运行时间写入txt文件
+with open(results_txt_path, "a", encoding="utf-8") as results_file:
+    results_file.write(f"\n{'=' * 120}\n")
+    results_file.write("程序总运行时间:\n")
+    results_file.write(
+        f"  {hours}小时 {minutes}分钟 {seconds:.2f}秒 (总计: {total_program_time:.2f}秒)\n"
+    )
+    results_file.write(f"{'=' * 120}\n")
+
 print(f"\n所有结果已保存到: {results_txt_path}")
+print(f"\n{'=' * 60}")
+print(
+    f"程序总运行时间: {hours}小时 {minutes}分钟 {seconds:.2f}秒 ({total_program_time:.2f}秒)"
+)
+print(f"{'=' * 60}")
