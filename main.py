@@ -314,11 +314,12 @@ for image_path, gt_path in zip(image_paths, gt_paths):  # 遍历所有数据集
             total_training_time,
             seed_idx + 1,  # x轴：seed_idx
         )
-        # 写入每个类别的精度到TensorBoard
+        # 写入每个类别的精度到TensorBoard（合并为一个表格）
+        # x轴：类别序号，y轴：准确率，每条曲线代表一次实验
         for i, acc in enumerate(class_accuracies):
-            writer.add_scalar(
-                f"Class_Accuracy_{timestamp}_{data_name}_{seed_idx + 1}",
-                acc,
+            writer.add_scalars(
+                f"Class_Accuracy_{timestamp}_{data_name}",
+                {f"Experiment_{seed_idx + 1}": acc},
                 i + 1,  # x轴：class序号
             )
 
