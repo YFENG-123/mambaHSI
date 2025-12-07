@@ -233,15 +233,16 @@ for image_path, gt_path in zip(image_paths, gt_paths):  # 遍历所有数据集
             saved_type = "Train"
 
         ################################# 写入TensorBoard：最佳模型时的loss和acc ##################################
-        writer.add_scalar(
-            f"Best_Model_Loss_{timestamp}_{data_name}",
-            saved_loss,
-            seed_idx + 1,  # x轴：seed_idx
+        # 合并所有数据集到单个表格，每条曲线代表一个数据集
+        writer.add_scalars(
+            f"Best_Model_Loss_{timestamp}",
+            {data_name: saved_loss},
+            seed_idx + 1,  # x轴：实验序号
         )
-        writer.add_scalar(
-            f"Best_Model_Accuracy_{timestamp}_{data_name}",
-            saved_acc,
-            seed_idx + 1,  # x轴：seed_idx
+        writer.add_scalars(
+            f"Best_Model_Accuracy_{timestamp}",
+            {data_name: saved_acc},
+            seed_idx + 1,  # x轴：实验序号
         )
 
         ################################# 开始该次实验的测试评估 ##################################
@@ -294,25 +295,26 @@ for image_path, gt_path in zip(image_paths, gt_paths):  # 遍历所有数据集
         print(f"测试集 Kappa: {kappa:.2f}")
 
         ################################# 写入TensorBoard：该次实验的 OA、AA、Kappa、训练时间 ##################################
-        writer.add_scalar(
-            f"OA_{timestamp}_{data_name}",
-            oa,
-            seed_idx + 1,  # x轴：seed_idx
+        # 合并所有数据集到单个表格，每条曲线代表一个数据集
+        writer.add_scalars(
+            f"OA_{timestamp}",
+            {data_name: oa},
+            seed_idx + 1,  # x轴：实验序号
         )
-        writer.add_scalar(
-            f"AA_{timestamp}_{data_name}",
-            aa,
-            seed_idx + 1,  # x轴：seed_idx
+        writer.add_scalars(
+            f"AA_{timestamp}",
+            {data_name: aa},
+            seed_idx + 1,  # x轴：实验序号
         )
-        writer.add_scalar(
-            f"Kappa_{timestamp}_{data_name}",
-            kappa,
-            seed_idx + 1,  # x轴：seed_idx
+        writer.add_scalars(
+            f"Kappa_{timestamp}",
+            {data_name: kappa},
+            seed_idx + 1,  # x轴：实验序号
         )
-        writer.add_scalar(
-            f"Training_Time_{timestamp}_{data_name}",
-            total_training_time,
-            seed_idx + 1,  # x轴：seed_idx
+        writer.add_scalars(
+            f"Training_Time_{timestamp}",
+            {data_name: total_training_time},
+            seed_idx + 1,  # x轴：实验序号
         )
         # 写入每个类别的精度到TensorBoard（合并为一个表格）
         # x轴：类别序号，y轴：准确率，每条曲线代表一次实验
