@@ -373,16 +373,32 @@ for image_path, gt_path in zip(image_paths, gt_paths):  # 遍历所有数据集
     print(f"数据集: {data_name}，平均训练时间: {average_training_time:.2f}秒")
 
     ################################# 写入TensorBoard：该数据集所有实验的平均结果 ##################################
+    # 将平均结果添加到原始值表格的最后一个点后面第5个点位置
+    avg_position = len(seeds) + 5
     writer.add_scalars(
-        f"Result_{timestamp}_{data_name}",
-        {
-            "OA": average_oa,
-            "AA": average_aa,
-            "Kappa": average_kappa,
-            "Performance": average_performance,
-            "Training_Time": average_training_time,
-        },
-        len(seeds) + 1,
+        f"OA_{timestamp}",
+        {f"{data_name}_Average": average_oa},
+        avg_position,
+    )
+    writer.add_scalars(
+        f"AA_{timestamp}",
+        {f"{data_name}_Average": average_aa},
+        avg_position,
+    )
+    writer.add_scalars(
+        f"Kappa_{timestamp}",
+        {f"{data_name}_Average": average_kappa},
+        avg_position,
+    )
+    writer.add_scalars(
+        f"Performance_{timestamp}",
+        {f"{data_name}_Average": average_performance},
+        avg_position,
+    )
+    writer.add_scalars(
+        f"Training_Time_{timestamp}",
+        {f"{data_name}_Average": average_training_time},
+        avg_position,
     )
 
     ################################# 统一写入txt文件：该数据集所有实验的平均结果（表格形式） ##################################
