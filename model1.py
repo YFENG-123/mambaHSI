@@ -92,7 +92,7 @@ class Net1(nn.Module):
         """
         # 3x3卷积：空间特征提取
         x_conv_spatial = x_norm.permute(2, 0, 1).unsqueeze(0)  # (1, bands, H, W)
-        x_conv_spatial = self.conv3x3_spatial(x_conv_spatial)  # (1, 64, H, W)
+        x_conv_spatial = self.conv3x3_spatial(x_conv_spatial)  # (1, 32, H, W)
         x_conv_spatial = x_conv_spatial.squeeze(0).permute(1, 2, 0)  # (H, W, 128)
 
         """
@@ -111,6 +111,7 @@ class Net1(nn.Module):
         # Reshape为序列用于Mamba: (H, W, d_model) -> (H*W, d_model)
         x_mamba = x_conv_fusion.reshape(-1, self.d_model).unsqueeze(0)  # (H*W, d_model)
         x_mamba = self.mamba(x_mamba)  # (1, H*W, d_model)
+        x_mamba = self.mamba_norm(x_mamba)  # (1, H*W, d_model)
         x_mamba = x_mamba.squeeze(0)  # (H*W, d_model)
 
         # 分类
