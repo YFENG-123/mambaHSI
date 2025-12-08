@@ -59,10 +59,22 @@ class Net1(nn.Module):
         
         # Mamba正向层
         self.mamba_forward = Mamba2(d_model=self.d_model)
+        # Mamba正向归一化层
+        self.mamba_norm_forward = nn.Sequential(
+            nn.LayerNorm(self.d_model),
+            nn.GELU(),
+            nn.Dropout(dropout_rate),
+        )
         # Mamba反向层
         self.mamba_backward = Mamba2(d_model=self.d_model)
-        # Mamba归一化层
-        self.mamba_norm = nn.Sequential(
+        # Mamba反向归一化层
+        self.mamba_norm_backward = nn.Sequential(
+            nn.LayerNorm(self.d_model),
+            nn.GELU(),
+            nn.Dropout(dropout_rate),
+        )
+        # Mamba融合归一化层
+        self.mamba_norm_fusion = nn.Sequential(
             nn.LayerNorm(self.d_model),
             nn.GELU(),
             nn.Dropout(dropout_rate),
@@ -117,19 +129,20 @@ class Net1(nn.Module):
 
         # Reshape为序列用于Mamba: (H, W, d_model) -> (H*W, d_model)
         x_seq = x_conv_fusion.reshape(-1, self.d_model).unsqueeze(0)  # (1, H*W, d_model)
-        
         # Mamba正向处理
         x_mamba_forward = self.mamba_forward(x_seq)  # (1, H*W, d_model)
+        x_mamba_forward = self.mamba_norm_forward(x_mamba_forward)  # (1, H*W, d_model)
         # Mamba反向处理（反转序列）
         x_mamba_backward = torch.flip(x_seq, dims=[1])  # (1, H*W, d_model) - 反转序列维度
         x_mamba_backward = self.mamba_backward(x_mamba_backward)  # (1, H*W, d_model)
+        x_mamba_backward = self.mamba_norm_backward(x_mamba_backward)  # (1, H*W, d_model)
         x_mamba_backward = torch.flip(x_mamba_backward, dims=[1])  # (1, H*W, d_model) - 反转回来保持原始顺序
+
         # 将正向和反向结果相加
         x_mamba = x_mamba_forward + x_mamba_backward  # (1, H*W, d_model)
-        
-        # 归一化
-        x_mamba = self.mamba_norm(x_mamba)  # (1, H*W, d_model)
+        x_mamba = self.mamba_norm_fusion(x_mamba)  # (1, H*W, d_model)
         x_mamba = x_mamba.squeeze(0)  # (H*W, d_model)
+        x_mamba = x_mamba.reshape(-1, self.d_model)  # (H*W, d_model)
 
         # 分类
         output = self.classifier(x_mamba)  # (H*W, num_classes)
