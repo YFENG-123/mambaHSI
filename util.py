@@ -427,11 +427,19 @@ def write_results_to_txt(
     average_kappa,
     average_performance,
     average_training_time,
+    average_test_loss,
+    average_best_model_loss,
+    average_best_model_acc,
+    average_best_model_epoch,
     std_oa,
     std_aa,
     std_kappa,
     std_performance,
     std_training_time,
+    std_test_loss,
+    std_best_model_loss,
+    std_best_model_acc,
+    std_best_model_epoch,
     num_experiments,
 ):
     """
@@ -454,8 +462,8 @@ def write_results_to_txt(
             - best_model_acc: 最佳模型accuracy
             - best_model_epoch: 最佳模型产生的轮次
             - best_model_type: 最佳模型类型（Train/Val）
-        average_oa, average_aa, average_kappa, average_performance, average_training_time: 平均值
-        std_oa, std_aa, std_kappa, std_performance, std_training_time: 标准差
+        average_oa, average_aa, average_kappa, average_performance, average_training_time, average_test_loss, average_best_model_loss, average_best_model_acc, average_best_model_epoch: 平均值
+        std_oa, std_aa, std_kappa, std_performance, std_training_time, std_test_loss, std_best_model_loss, std_best_model_acc, std_best_model_epoch: 标准差
         num_experiments: 实验次数
     """
     # 以追加方式打开文件
@@ -490,25 +498,34 @@ def write_results_to_txt(
             f"{exp_result['best_model_epoch']:<10}\n"
         )
     results_file.write("-" * 120 + "\n")
+    # 确定最佳模型类型的显示（如果所有实验类型相同则显示，否则显示"Mixed"）
+    best_model_types = [exp['best_model_type'] for exp in experiment_results]
+    if len(set(best_model_types)) == 1:
+        avg_best_model_type = best_model_types[0]
+    else:
+        avg_best_model_type = "Mixed"
+    avg_best_model_info = f"{avg_best_model_type} Loss:{average_best_model_loss:.4f} Acc:{average_best_model_acc:.2f}%"
     results_file.write(
         f"{'平均':<6} {'-':<8} "
         f"{average_training_time:<14.2f} "
-        f"{'':<12} "
+        f"{average_test_loss:<12.4f} "
         f"{average_oa:<10.2f} "
         f"{average_aa:<10.2f} "
         f"{average_kappa:<10.2f} "
-        f"{'':<30} "
-        f"{'':<10}\n"
+        f"{avg_best_model_info:<30} "
+        f"{average_best_model_epoch:<10.1f}\n"
     )
+    # 标准差行中，最佳模型类型列显示标准差（loss和acc的标准差）
+    std_best_model_info = f"Loss:{std_best_model_loss:.4f} Acc:{std_best_model_acc:.2f}%"
     results_file.write(
         f"{'标准差':<6} {'-':<8} "
         f"{std_training_time:<14.2f} "
-        f"{'':<12} "
+        f"{std_test_loss:<12.4f} "
         f"{std_oa:<10.2f} "
         f"{std_aa:<10.2f} "
         f"{std_kappa:<10.2f} "
-        f"{'':<30} "
-        f"{'':<10}\n"
+        f"{std_best_model_info:<30} "
+        f"{std_best_model_epoch:<10.1f}\n"
     )
     results_file.write("\n")
 
@@ -520,13 +537,13 @@ def write_results_to_txt(
         num_classes = len(experiment_results[0]["class_accuracies"])
         results_file.write("各类别精度对比表:\n")
         results_file.write("-" * 120 + "\n")
-        # 表头
+        # 表头 - 使用固定宽度确保对齐
         header = f"{'实验':<6} {'种子':<8}"
         for i in range(num_classes):
             header += f" {'类别' + str(i + 1) + '(%)':<12}"
         results_file.write(header + "\n")
         results_file.write("-" * 120 + "\n")
-        # 每次实验的各类别精度
+        # 每次实验的各类别精度 - 使用固定宽度确保对齐
         for exp_result in experiment_results:
             row = f"{exp_result['seed_idx']:<6} {exp_result['seed']:<8}"
             for acc in exp_result["class_accuracies"]:
@@ -536,7 +553,7 @@ def write_results_to_txt(
                     row += f" {acc:<12.2f}"
             results_file.write(row + "\n")
         results_file.write("-" * 120 + "\n")
-        # 平均各类别精度
+        # 平均各类别精度 - 使用固定宽度确保对齐
         avg_class_acc = np.mean(
             [exp["class_accuracies"] for exp in experiment_results], axis=0
         )
