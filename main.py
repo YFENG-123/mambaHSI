@@ -40,8 +40,8 @@ gt_paths = [
     # "data/Salinas_gt.mat",
     # "data/SalinasA_gt.mat",
 ]
-val_split_rate = 0.01
-test_split_rate = 0.98
+val_split_rate = 0.05
+test_split_rate = 0.90
 print(f"训练轮数:{num_epochs}\t\t学习率:{learning_rate}\t\tDropout率:{dropout_rate}")
 print(f"验证集比例:{val_split_rate}\t\t测试集比例:{test_split_rate}")
 

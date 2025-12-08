@@ -18,11 +18,7 @@ class Net1(nn.Module):
         self.d_model = d_model
 
         # 预处理层：只归一化
-        self.preprocess = nn.Sequential(
-            nn.LayerNorm(bands),
-            nn.GELU(),
-            nn.Dropout(dropout_rate),
-        )
+        self.preprocess = nn.LayerNorm(bands)
 
         """
         光谱特征提取层
@@ -56,23 +52,11 @@ class Net1(nn.Module):
             nn.GELU(),
             nn.Dropout(dropout_rate),
         )
-        
+
         # Mamba正向层
         self.mamba_forward = Mamba2(d_model=self.d_model)
-        # Mamba正向归一化层
-        self.mamba_norm_forward = nn.Sequential(
-            nn.LayerNorm(self.d_model),
-            nn.GELU(),
-            nn.Dropout(dropout_rate),
-        )
         # Mamba反向层
         self.mamba_backward = Mamba2(d_model=self.d_model)
-        # Mamba反向归一化层
-        self.mamba_norm_backward = nn.Sequential(
-            nn.LayerNorm(self.d_model),
-            nn.GELU(),
-            nn.Dropout(dropout_rate),
-        )
         # Mamba融合归一化层
         self.mamba_norm_fusion = nn.Sequential(
             nn.LayerNorm(self.d_model),
@@ -118,9 +102,7 @@ class Net1(nn.Module):
         特征融合层
         """
         # 拼接光谱特征和空间特征
-        x_concat = torch.cat(
-            [x_conv_spectrum, x_conv_spatial], dim=2
-        )  # (H, W, 160)
+        x_concat = torch.cat([x_conv_spectrum, x_conv_spatial], dim=2)  # (H, W, 160)
 
         # 1x1卷积：特征融合（需要转换为Conv2d格式）
         x_concat_conv = x_concat.permute(2, 0, 1).unsqueeze(0)  # (1, 160, H, W)
@@ -128,21 +110,20 @@ class Net1(nn.Module):
         x_conv_fusion = x_conv_fusion.squeeze(0).permute(1, 2, 0)  # (H, W, d_model)
 
         # Reshape为序列用于Mamba: (H, W, d_model) -> (H*W, d_model)
-        x_seq = x_conv_fusion.reshape(-1, self.d_model).unsqueeze(0)  # (1, H*W, d_model)
+        x_seq = x_conv_fusion.reshape(-1, self.d_model).unsqueeze(
+            0
+        )  # (1, H*W, d_model)
         # Mamba正向处理
         x_mamba_forward = self.mamba_forward(x_seq)  # (1, H*W, d_model)
-        x_mamba_forward = self.mamba_norm_forward(x_mamba_forward)  # (1, H*W, d_model)
         # Mamba反向处理（反转序列）
-        x_mamba_backward = torch.flip(x_seq, dims=[1])  # (1, H*W, d_model) - 反转序列维度
+        x_mamba_backward = torch.flip(x_seq, dims=[1])  # (1, H*W, d_model)
         x_mamba_backward = self.mamba_backward(x_mamba_backward)  # (1, H*W, d_model)
-        x_mamba_backward = self.mamba_norm_backward(x_mamba_backward)  # (1, H*W, d_model)
-        x_mamba_backward = torch.flip(x_mamba_backward, dims=[1])  # (1, H*W, d_model) - 反转回来保持原始顺序
+        x_mamba_backward = torch.flip(x_mamba_backward, dims=[1])  # (1, H*W, d_model)
 
         # 将正向和反向结果相加
         x_mamba = x_mamba_forward + x_mamba_backward  # (1, H*W, d_model)
         x_mamba = self.mamba_norm_fusion(x_mamba)  # (1, H*W, d_model)
-        x_mamba = x_mamba.squeeze(0)  # (H*W, d_model)
-        x_mamba = x_mamba.reshape(-1, self.d_model)  # (H*W, d_model)
+        x_mamba = x_mamba.squeeze(0).reshape(-1, self.d_model)  # (H*W, d_model)
 
         # 分类
         output = self.classifier(x_mamba)  # (H*W, num_classes)
