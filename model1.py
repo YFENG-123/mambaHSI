@@ -18,7 +18,11 @@ class Net1(nn.Module):
         self.d_model = d_model
 
         # 预处理层：只归一化
-        self.preprocess = nn.LayerNorm(bands)  # (H, W, bands) -> (H, W, bands)
+        self.preprocess = nn.Sequential(
+            nn.LayerNorm(bands),
+            nn.GELU(),
+            nn.Dropout(dropout_rate),
+        )
 
         """
         光谱特征提取层
