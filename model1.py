@@ -45,6 +45,14 @@ class Net1(nn.Module):
         """
         特征融合层
         """
+        # 1x1卷积：特征融合
+        self.conv1x1_fusion = nn.Sequential(
+            nn.Conv2d(256, self.d_model, kernel_size=1, stride=1, padding=0),
+            nn.BatchNorm2d(self.d_model),
+            nn.GELU(),
+            nn.Dropout(dropout_rate),
+        )
+        
         # Mamba层
         self.mamba = Mamba2(d_model=self.d_model)
         self.mamba_norm = nn.Sequential(
@@ -93,10 +101,15 @@ class Net1(nn.Module):
         # 拼接光谱特征和空间特征
         x_concat = torch.cat(
             [x_conv_spectrum, x_conv_spatial], dim=2
-        )  # (H, W, d_model)
+        )  # (H, W, 256)
+
+        # 1x1卷积：特征融合（需要转换为Conv2d格式）
+        x_concat_conv = x_concat.permute(2, 0, 1).unsqueeze(0)  # (1, 256, H, W)
+        x_conv_fusion = self.conv1x1_fusion(x_concat_conv)  # (1, d_model, H, W)
+        x_conv_fusion = x_conv_fusion.squeeze(0).permute(1, 2, 0)  # (H, W, d_model)
 
         # Reshape为序列用于Mamba: (H, W, d_model) -> (H*W, d_model)
-        x_mamba = x_concat.reshape(-1, self.d_model).unsqueeze(0)  # (H*W, d_model)
+        x_mamba = x_conv_fusion.reshape(-1, self.d_model).unsqueeze(0)  # (H*W, d_model)
         x_mamba = self.mamba(x_mamba)  # (1, H*W, d_model)
         x_mamba = x_mamba.squeeze(0)  # (H*W, d_model)
 
