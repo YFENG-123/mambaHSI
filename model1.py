@@ -59,7 +59,11 @@ class Net1(nn.Module):
             nn.LayerNorm(128),
             nn.GELU(),
             nn.Dropout(dropout_rate),
-            nn.Linear(128, num_classes),
+            nn.Linear(128, 64),
+            nn.LayerNorm(64),
+            nn.GELU(),
+            nn.Dropout(dropout_rate),
+            nn.Linear(64, num_classes),
         )
 
     def forward(self, x):
