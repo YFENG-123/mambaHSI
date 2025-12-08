@@ -3,3 +3,4 @@ images/
 logs/
 weights/
 __pycache__/
+results*/

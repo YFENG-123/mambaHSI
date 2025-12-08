@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
-from model import Mamba2HSIClassifier
+from model1 import Net1
 from util import (
     load_data,
     calculate_result,
@@ -21,23 +21,27 @@ learning_rate = 0.0005
 dropout_rate = 0.50
 seeds = [21, 22, 80, 443, 445, 554, 3306, 5900, 8080, 25565]
 image_paths = [
-    "data/Botswana.mat",
+    # "data/HuaiLai.mat",
+    # "data/Botswana.mat",
     "data/Indian_pines.mat",
-    "data/KSC.mat",
-    "data/PaviaU.mat",
-    "data/Salinas.mat",
-    "data/SalinasA.mat",
+    # "data/KSC.mat",
+    # "data/Pavia.mat",
+    # "data/PaviaU.mat",
+    # "data/Salinas.mat",
+    # "data/SalinasA.mat",
 ]
 gt_paths = [
-    "data/Botswana_gt.mat",
+    # "data/HuaiLai.mat",
+    # "data/Botswana_gt.mat",
     "data/Indian_pines_gt.mat",
-    "data/KSC_gt.mat",
-    "data/PaviaU_gt.mat",
-    "data/Salinas_gt.mat",
-    "data/SalinasA_gt.mat",
+    # "data/KSC_gt.mat",
+    # "data/Pavia_gt.mat",
+    # "data/PaviaU_gt.mat",
+    # "data/Salinas_gt.mat",
+    # "data/SalinasA_gt.mat",
 ]
-val_split_rate = 0.00
-test_split_rate = 0.90
+val_split_rate = 0.01
+test_split_rate = 0.98
 print(f"训练轮数:{num_epochs}\t\t学习率:{learning_rate}\t\tDropout率:{dropout_rate}")
 print(f"验证集比例:{val_split_rate}\t\t测试集比例:{test_split_rate}")
 
@@ -48,7 +52,7 @@ program_start_time = time.time()
 timestamp = time.strftime("%Y%m%d-%H%M%S")
 log_dir = os.path.join("logs", timestamp)
 writer = SummaryWriter(log_dir=log_dir)
-print(f"TensorBoard 日志目录: {log_dir}, 使用 tensorboard --logdir logs 查看日志")
+print(f"TensorBoard 日志目录: {log_dir}, 使用 tensorboard --logdir {log_dir} 查看日志")
 
 ################################# 创建权重文件目录 ##################################
 weights_dir = os.path.join("weights", timestamp)
@@ -97,7 +101,7 @@ for image_path, gt_path in zip(image_paths, gt_paths):  # 遍历所有数据集
         )
         ################################# 初始化模型 ################################
 
-        model = Mamba2HSIClassifier(
+        model = Net1(
             image_x=image_x,
             image_y=image_y,
             num_classes=num_classes,
