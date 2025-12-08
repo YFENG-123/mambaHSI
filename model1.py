@@ -57,8 +57,11 @@ class Net1(nn.Module):
             nn.Dropout(dropout_rate),
         )
         
-        # Mamba层
-        self.mamba = Mamba2(d_model=self.d_model)
+        # Mamba正向层
+        self.mamba_forward = Mamba2(d_model=self.d_model)
+        # Mamba反向层
+        self.mamba_backward = Mamba2(d_model=self.d_model)
+        # Mamba归一化层
         self.mamba_norm = nn.Sequential(
             nn.LayerNorm(self.d_model),
             nn.GELU(),
@@ -113,8 +116,18 @@ class Net1(nn.Module):
         x_conv_fusion = x_conv_fusion.squeeze(0).permute(1, 2, 0)  # (H, W, d_model)
 
         # Reshape为序列用于Mamba: (H, W, d_model) -> (H*W, d_model)
-        x_mamba = x_conv_fusion.reshape(-1, self.d_model).unsqueeze(0)  # (H*W, d_model)
-        x_mamba = self.mamba(x_mamba)  # (1, H*W, d_model)
+        x_seq = x_conv_fusion.reshape(-1, self.d_model).unsqueeze(0)  # (1, H*W, d_model)
+        
+        # Mamba正向处理
+        x_mamba_forward = self.mamba_forward(x_seq)  # (1, H*W, d_model)
+        # Mamba反向处理（反转序列）
+        x_mamba_backward = torch.flip(x_seq, dims=[1])  # (1, H*W, d_model) - 反转序列维度
+        x_mamba_backward = self.mamba_backward(x_mamba_backward)  # (1, H*W, d_model)
+        x_mamba_backward = torch.flip(x_mamba_backward, dims=[1])  # (1, H*W, d_model) - 反转回来保持原始顺序
+        # 将正向和反向结果相加
+        x_mamba = x_mamba_forward + x_mamba_backward  # (1, H*W, d_model)
+        
+        # 归一化
         x_mamba = self.mamba_norm(x_mamba)  # (1, H*W, d_model)
         x_mamba = x_mamba.squeeze(0)  # (H*W, d_model)
 
