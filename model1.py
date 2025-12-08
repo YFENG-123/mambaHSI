@@ -25,11 +25,7 @@ class Net1(nn.Module):
         """
         # 1x1卷积（简化结构以减少过拟合）
         self.conv1x1_spectrum = nn.Sequential(
-            nn.Conv2d(bands, 256, kernel_size=1, stride=1, padding=0),
-            nn.BatchNorm2d(256),
-            nn.GELU(),
-            nn.Dropout(dropout_rate),
-            nn.Conv2d(256, 128, kernel_size=1, stride=1, padding=0),
+            nn.Conv2d(bands, 128, kernel_size=1, stride=1, padding=0),
             nn.BatchNorm2d(128),
             nn.GELU(),
             nn.Dropout(dropout_rate),
@@ -40,11 +36,7 @@ class Net1(nn.Module):
         """
         # 3x3卷积
         self.conv3x3_spatial = nn.Sequential(
-            nn.Conv2d(bands, 256, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(256),
-            nn.GELU(),
-            nn.Dropout(dropout_rate),
-            nn.Conv2d(256, 128, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(bands, 128, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(128),
             nn.GELU(),
             nn.Dropout(dropout_rate),
@@ -67,15 +59,11 @@ class Net1(nn.Module):
             nn.LayerNorm(128),
             nn.GELU(),
             nn.Dropout(dropout_rate),
-            nn.Linear(128, 64),
-            nn.LayerNorm(64),
-            nn.GELU(),
-            nn.Dropout(dropout_rate),
-            nn.Linear(64, num_classes),
+            nn.Linear(128, num_classes),
         )
 
     def forward(self, x):
-        h, w, _ = x.shape
+        h, w, bands = x.shape
         # 预处理：归一化
         x_norm = self.preprocess(x)  # (H, W, bands)
 
