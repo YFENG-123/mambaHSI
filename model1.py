@@ -23,7 +23,7 @@ class Net1(nn.Module):
         """
         光谱特征提取层
         """
-        # 1x1卷积
+        # 1x1卷积（简化结构以减少过拟合）
         self.conv1x1_spectrum = nn.Sequential(
             nn.Conv2d(bands, 256, kernel_size=1, stride=1, padding=0),
             nn.BatchNorm2d(256),
@@ -67,7 +67,11 @@ class Net1(nn.Module):
             nn.LayerNorm(128),
             nn.GELU(),
             nn.Dropout(dropout_rate),
-            nn.Linear(128, num_classes),
+            nn.Linear(128, 64),
+            nn.LayerNorm(64),
+            nn.GELU(),
+            nn.Dropout(dropout_rate),
+            nn.Linear(64, num_classes),
         )
 
     def forward(self, x):
