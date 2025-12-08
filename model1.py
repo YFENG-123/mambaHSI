@@ -36,8 +36,8 @@ class Net1(nn.Module):
         """
         # 3x3卷积
         self.conv3x3_spatial = nn.Sequential(
-            nn.Conv2d(bands, 64, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(64),
+            nn.Conv2d(bands, 32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
             nn.GELU(),
             nn.Dropout(dropout_rate),
         )
@@ -47,7 +47,7 @@ class Net1(nn.Module):
         """
         # 1x1卷积：特征融合
         self.conv1x1_fusion = nn.Sequential(
-            nn.Conv2d(128 + 64, self.d_model, kernel_size=1, stride=1, padding=0),
+            nn.Conv2d(128 + 32, self.d_model, kernel_size=1, stride=1, padding=0),
             nn.BatchNorm2d(self.d_model),
             nn.GELU(),
             nn.Dropout(dropout_rate),
@@ -101,10 +101,10 @@ class Net1(nn.Module):
         # 拼接光谱特征和空间特征
         x_concat = torch.cat(
             [x_conv_spectrum, x_conv_spatial], dim=2
-        )  # (H, W, 192)
+        )  # (H, W, 160)
 
         # 1x1卷积：特征融合（需要转换为Conv2d格式）
-        x_concat_conv = x_concat.permute(2, 0, 1).unsqueeze(0)  # (1, 192, H, W)
+        x_concat_conv = x_concat.permute(2, 0, 1).unsqueeze(0)  # (1, 160, H, W)
         x_conv_fusion = self.conv1x1_fusion(x_concat_conv)  # (1, d_model, H, W)
         x_conv_fusion = x_conv_fusion.squeeze(0).permute(1, 2, 0)  # (H, W, d_model)
 
