@@ -37,38 +37,42 @@ class Net(nn.Module):
         """
         三分支特征提取
         """
-        # 统一压缩维度：将每个分支的输出压缩到64通道
-        branch_out_channels = 64
 
         # 分支1：深度可分离方形卷积（可配置列表，默认[3, 5, 7]）
         # 压缩层已集成在模块内部
+        branch1_out_channels = 64
+
         self.branch1_square = DepthwiseSeparableSquareConv(
             in_channels=bands,
-            out_channels=branch_out_channels,
+            out_channels=branch1_out_channels,
             kernel_sizes=[3, 5, 7],  # 可配置列表
             dropout_rate=dropout_rate,
         )
 
         # 分支2：深度可分离ASPP（不进行融合，保留所有膨胀卷积分支）
         # 压缩层已集成在模块内部
+        branch2_out_channels = 32
         self.branch2_aspp = DepthwiseSeparableASPP(
             in_channels=bands,
-            out_channels=branch_out_channels,
+            out_channels=branch2_out_channels,
             dilations=[9, 11, 13],
             dropout_rate=dropout_rate,
         )
 
         # 分支3：多尺度非对称深度可分离卷积（不进行融合，保留所有非对称卷积对）
         # 压缩层已集成在模块内部
+        branch3_out_channels = 16
         self.branch3_asymmetric = MultiScaleAsymmetricDepthConv(
             in_channels=bands,
-            out_channels=branch_out_channels,
+            out_channels=branch3_out_channels,
             kernel_sizes=[15, 17, 19],  # 可配置列表
             dropout_rate=dropout_rate,
         )
 
         # 计算融合层的输入通道数（压缩后，每个分支输出64通道）
-        fusion_input_channels = branch_out_channels * 3  # 64 * 3 = 192
+        fusion_input_channels = (
+            branch1_out_channels + branch2_out_channels + branch3_out_channels
+        )
 
         """
         特征融合层
