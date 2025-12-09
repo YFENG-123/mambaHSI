@@ -1,10 +1,9 @@
 import os
 import time
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from model1 import Net1
+from models import Net
 from util import (
     load_data,
     calculate_seed_result,
@@ -113,7 +112,7 @@ for image_path, gt_path in zip(image_paths, gt_paths):
             test_split_rate=test_split_rate,
         )
         ############################### 每个种子重新随机初始化模型参数 ##################################
-        model = Net1(
+        model = Net(
             image_x=image_x,
             image_y=image_y,
             num_classes=num_classes,
