@@ -7,7 +7,8 @@ import torch.optim as optim
 from model1 import Net1
 from util import (
     load_data,
-    calculate_result,
+    calculate_seed_result,
+    calculate_dataset_result,
     run_model,
     generate_picture,
     set_seed,
@@ -239,7 +240,7 @@ for image_path, gt_path in zip(image_paths, gt_paths):
             test_time,
         ) = run_model(model, test_loader, criterion, optimizer, "test")
         oa, aa, kappa, confusion_matrix, class_accuracies = (  # 计算测试集结果
-            calculate_result(
+            calculate_seed_result(
                 avg_test_loss,
                 test_accuracy,
                 all_test_predictions,
@@ -292,34 +293,26 @@ for image_path, gt_path in zip(image_paths, gt_paths):
         )
 
     ################################# 计算一个数据集所有种子的平均结果 ##################################
-    # 从experiment_results中提取数据计算平均值和标准差
-    oa_values = [exp["oa"] for exp in experiment_results]
-    aa_values = [exp["aa"] for exp in experiment_results]
-    kappa_values = [exp["kappa"] for exp in experiment_results]
-    performance_values = [exp["performance"] for exp in experiment_results]
-    training_time_values = [exp["total_training_time"] for exp in experiment_results]
-    test_loss_values = [exp["test_loss"] for exp in experiment_results]
-    best_model_loss_values = [exp["best_model_loss"] for exp in experiment_results]
-    best_model_acc_values = [exp["best_model_acc"] for exp in experiment_results]
-    best_model_epoch_values = [exp["best_model_epoch"] for exp in experiment_results]
-    average_oa = np.mean(oa_values)
-    average_aa = np.mean(aa_values)
-    average_kappa = np.mean(kappa_values)
-    average_performance = np.mean(performance_values)
-    average_training_time = np.mean(training_time_values)
-    average_test_loss = np.mean(test_loss_values)
-    average_best_model_loss = np.mean(best_model_loss_values)
-    average_best_model_acc = np.mean(best_model_acc_values)
-    average_best_model_epoch = np.mean(best_model_epoch_values)
-    std_oa = np.std(oa_values)
-    std_aa = np.std(aa_values)
-    std_kappa = np.std(kappa_values)
-    std_performance = np.std(performance_values)
-    std_training_time = np.std(training_time_values)
-    std_test_loss = np.std(test_loss_values)
-    std_best_model_loss = np.std(best_model_loss_values)
-    std_best_model_acc = np.std(best_model_acc_values)
-    std_best_model_epoch = np.std(best_model_epoch_values)
+    (
+        average_oa,
+        average_aa,
+        average_kappa,
+        average_performance,
+        average_training_time,
+        average_test_loss,
+        average_best_model_loss,
+        average_best_model_acc,
+        average_best_model_epoch,
+        std_oa,
+        std_aa,
+        std_kappa,
+        std_performance,
+        std_training_time,
+        std_test_loss,
+        std_best_model_loss,
+        std_best_model_acc,
+        std_best_model_epoch,
+    ) = calculate_dataset_result(experiment_results)
     ################################# 打印一个数据集所有种子的平均结果 ##################################
     print(f"数据集: {data_name}，平均OA: {average_oa:.2f}%")
     print(f"数据集: {data_name}，平均AA: {average_aa:.2f}%")

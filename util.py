@@ -226,7 +226,7 @@ def step(model, loader, criterion, optimizer, mode):
     )
 
 
-def calculate_result( # 计算测试集结果
+def calculate_seed_result( # 计算一个种子结果的函数
     avg_test_loss,
     test_accuracy,
     all_test_predictions,
@@ -261,6 +261,74 @@ def calculate_result( # 计算测试集结果
     kappa = float((po - pe) / (1 - pe) * 100.0)
 
     return oa, aa, kappa, cm, class_accuracies
+
+
+def calculate_dataset_result( # 计算一个数据集的结果
+    experiment_results,
+):
+    """
+    计算一个数据集所有种子的平均结果
+    
+    Args:
+        experiment_results: 包含所有种子实验结果的列表
+    
+    Returns:
+        平均值和标准差元组: (average_oa, average_aa, average_kappa, average_performance,
+        average_training_time, average_test_loss, average_best_model_loss, average_best_model_acc,
+        average_best_model_epoch, std_oa, std_aa, std_kappa, std_performance,
+        std_training_time, std_test_loss, std_best_model_loss, std_best_model_acc, std_best_model_epoch)
+    """
+    # 从experiment_results中提取数据计算平均值和标准差
+    oa_values = [exp["oa"] for exp in experiment_results]
+    aa_values = [exp["aa"] for exp in experiment_results]
+    kappa_values = [exp["kappa"] for exp in experiment_results]
+    performance_values = [exp["performance"] for exp in experiment_results]
+    training_time_values = [exp["total_training_time"] for exp in experiment_results]
+    test_loss_values = [exp["test_loss"] for exp in experiment_results]
+    best_model_loss_values = [exp["best_model_loss"] for exp in experiment_results]
+    best_model_acc_values = [exp["best_model_acc"] for exp in experiment_results]
+    best_model_epoch_values = [exp["best_model_epoch"] for exp in experiment_results]
+    
+    average_oa = np.mean(oa_values)
+    average_aa = np.mean(aa_values)
+    average_kappa = np.mean(kappa_values)
+    average_performance = np.mean(performance_values)
+    average_training_time = np.mean(training_time_values)
+    average_test_loss = np.mean(test_loss_values)
+    average_best_model_loss = np.mean(best_model_loss_values)
+    average_best_model_acc = np.mean(best_model_acc_values)
+    average_best_model_epoch = np.mean(best_model_epoch_values)
+    
+    std_oa = np.std(oa_values)
+    std_aa = np.std(aa_values)
+    std_kappa = np.std(kappa_values)
+    std_performance = np.std(performance_values)
+    std_training_time = np.std(training_time_values)
+    std_test_loss = np.std(test_loss_values)
+    std_best_model_loss = np.std(best_model_loss_values)
+    std_best_model_acc = np.std(best_model_acc_values)
+    std_best_model_epoch = np.std(best_model_epoch_values)
+    
+    return (
+        average_oa,
+        average_aa,
+        average_kappa,
+        average_performance,
+        average_training_time,
+        average_test_loss,
+        average_best_model_loss,
+        average_best_model_acc,
+        average_best_model_epoch,
+        std_oa,
+        std_aa,
+        std_kappa,
+        std_performance,
+        std_training_time,
+        std_test_loss,
+        std_best_model_loss,
+        std_best_model_acc,
+        std_best_model_epoch,
+    )
 
 
 def generate_picture( # 生成测试集结果可视化图片
