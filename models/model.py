@@ -1,9 +1,10 @@
 import torch
 import torch.nn as nn
 from mamba_ssm import Mamba2
-from .attention import ChannelAttention, SpatialAttention
+from .attention import MultiAttention
 from .multi_scale_asymmetric_conv import MultiScaleAsymmetricDepthConv
 from .depthwise_separable_aspp import DepthwiseSeparableASPP
+from .depthwise_separable_square_conv import DepthwiseSeparableSquareConv
 
 
 class Net(nn.Module):
@@ -27,42 +28,48 @@ class Net(nn.Module):
         # 预处理层：归一化
         self.preprocess = nn.LayerNorm(bands)
 
-        # 通道注意力模块：对原始高光谱通道应用注意力
-        self.channel_attention = ChannelAttention(channels=bands, reduction=16)
-        
-        # 空间注意力模块：对通道注意力后的高光谱数据应用空间注意力
-        self.spatial_attention = SpatialAttention(kernel_size=7)
+        # 多头注意力模块：组合通道注意力和空间注意力
+        self.multi_attention = MultiAttention(channels=bands, reduction=16, spatial_kernel_size=7)
 
         """
-        双分支特征提取
+        三分支特征提取
         """
-        # 分支1：深度可分离ASPP
+        # 分支1：深度可分离ASPP（不进行融合，保留所有膨胀卷积分支）
         self.branch1_aspp = DepthwiseSeparableASPP(
-            in_channels=bands,
-            out_channels=d_model // 2,
-            dilations=[1, 6, 12, 18],
+            channels=bands,  # 输入输出通道数保持不变
+            dilations=[9, 11, 13],
             dropout_rate=dropout_rate
         )
         
-        # 分支2：多尺度非对称深度可分离卷积
+        # 分支2：多尺度非对称深度可分离卷积（不进行融合，保留所有非对称卷积对）
         self.branch2_asymmetric = MultiScaleAsymmetricDepthConv(
             channels=bands,
+            kernel_sizes=[15, 17, 19],  # 可配置列表
             dropout_rate=dropout_rate
         )
-        # 将非对称卷积输出投影到d_model//2维
-        self.branch2_proj = nn.Sequential(
-            nn.Conv2d(bands, d_model // 2, kernel_size=1, stride=1, padding=0),
-            nn.BatchNorm2d(d_model // 2),
-            nn.GELU(),
-            nn.Dropout(dropout_rate),
+        
+        # 分支3：深度可分离方形卷积（可配置列表，默认[3, 5, 7]）
+        self.branch3_square = DepthwiseSeparableSquareConv(
+            channels=bands,
+            kernel_sizes=[3, 5, 7],  # 可配置列表
+            dropout_rate=dropout_rate
         )
+        
+        # 计算融合层的输入通道数
+        # 分支1: bands * len(dilations)
+        # 分支2: bands * len(kernel_sizes) * 2 (每个kernel_size有2个卷积：1xk和kx1)
+        # 分支3: bands * len(kernel_sizes)
+        branch1_output_channels = bands * len(self.branch1_aspp.dilated_convs)
+        branch2_output_channels = bands * len(self.branch2_asymmetric.kernel_sizes) * 2
+        branch3_output_channels = bands * len(self.branch3_square.kernel_sizes)
+        fusion_input_channels = branch1_output_channels + branch2_output_channels + branch3_output_channels
 
         """
         特征融合层
         """
-        # 1x1卷积：将两个分支的特征融合
+        # 1x1卷积：将三个分支的特征融合
         self.fusion = nn.Sequential(
-            nn.Conv2d(d_model // 2 + d_model // 2, self.d_model, kernel_size=1, stride=1, padding=0),
+            nn.Conv2d(fusion_input_channels, self.d_model, kernel_size=1, stride=1, padding=0),
             nn.BatchNorm2d(self.d_model),
             nn.GELU(),
             nn.Dropout(dropout_rate),
@@ -115,27 +122,26 @@ class Net(nn.Module):
         # 转换为Conv2d格式以应用注意力
         x_norm_conv = x_norm.permute(2, 0, 1).unsqueeze(0)  # (1, bands, H, W)
         
-        # 通道注意力
-        x_channel_attended = self.channel_attention(x_norm_conv)  # (1, bands, H, W)
-        
-        # 空间注意力
-        x_attended = self.spatial_attention(x_channel_attended)  # (1, bands, H, W)
+        # 多头注意力：组合通道注意力和空间注意力
+        x_attended = self.multi_attention(x_norm_conv)  # (1, bands, H, W)
 
         """
-        双分支特征提取
+        三分支特征提取
         """
-        # 分支1：深度可分离ASPP
-        x_branch1 = self.branch1_aspp(x_attended)  # (1, d_model//2, H, W)
+        # 分支1：深度可分离ASPP（不进行融合，保留所有膨胀卷积分支）
+        x_branch1 = self.branch1_aspp(x_attended)  # (1, bands*len(dilations), H, W)
         
-        # 分支2：多尺度非对称深度可分离卷积
-        x_branch2 = self.branch2_asymmetric(x_attended)  # (1, bands, H, W)
-        x_branch2 = self.branch2_proj(x_branch2)  # (1, d_model//2, H, W)
+        # 分支2：多尺度非对称深度可分离卷积（不进行融合，保留所有非对称卷积对）
+        x_branch2 = self.branch2_asymmetric(x_attended)  # (1, bands*len(kernel_sizes)*2, H, W)
+        
+        # 分支3：深度可分离方形卷积（可配置列表，输出通道数=bands*len(kernel_sizes)）
+        x_branch3 = self.branch3_square(x_attended)  # (1, bands*len(kernel_sizes), H, W)
 
         """
         特征融合
         """
-        # 拼接两个分支的特征
-        x_concat = torch.cat([x_branch1, x_branch2], dim=1)  # (1, d_model, H, W)
+        # 拼接三个分支的特征
+        x_concat = torch.cat([x_branch1, x_branch2, x_branch3], dim=1)  # (1, fusion_input_channels, H, W)
         
         # 1x1卷积融合
         x_fusion = self.fusion(x_concat)  # (1, d_model, H, W)

@@ -2,8 +2,6 @@ import torch
 import torch.nn as nn
 from mamba_ssm import Mamba2
 from .attention import ChannelAttention, SpatialAttention
-from .multi_scale_square_conv import MultiScaleSquareDepthConv
-from .multi_scale_asymmetric_conv import MultiScaleAsymmetricDepthConv
 
 
 class Net1(nn.Module):

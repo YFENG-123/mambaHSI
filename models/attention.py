@@ -105,3 +105,40 @@ class SpatialAttention(nn.Module):
         # 应用注意力权重
         return x * attention_weights
 
+
+class MultiAttention(nn.Module):
+    """
+    多头注意力模块
+    组合通道注意力和空间注意力，按顺序应用
+    用于Net网络调用
+    """
+    def __init__(self, channels, reduction=16, spatial_kernel_size=7):
+        """
+        Args:
+            channels: 输入特征图的通道数
+            reduction: 通道注意力的降维比例，用于构建共享MLP
+            spatial_kernel_size: 空间注意力的卷积核大小
+        """
+        super(MultiAttention, self).__init__()
+        
+        # 通道注意力模块
+        self.channel_attention = ChannelAttention(channels=channels, reduction=reduction)
+        
+        # 空间注意力模块
+        self.spatial_attention = SpatialAttention(kernel_size=spatial_kernel_size)
+
+    def forward(self, x):
+        """
+        Args:
+            x: 输入特征图 (B, C, H, W)
+        Returns:
+            应用通道和空间注意力后的特征图 (B, C, H, W)
+        """
+        # 先应用通道注意力
+        x = self.channel_attention(x)  # (B, C, H, W)
+        
+        # 再应用空间注意力
+        x = self.spatial_attention(x)  # (B, C, H, W)
+        
+        return x
+

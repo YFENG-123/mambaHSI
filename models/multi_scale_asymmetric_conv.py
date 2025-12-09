@@ -1,85 +1,61 @@
+import torch
 import torch.nn as nn
 
 
 class MultiScaleAsymmetricDepthConv(nn.Module):
     """
     多尺度非对称深度可分离卷积模块
-    使用13、15、17、19、21四种大小的非对称深度可分离卷积核进行深度可分离卷积
+    使用可配置大小的非对称深度可分离卷积核进行深度可分离卷积
     """
-    def __init__(self, channels, dropout_rate=0.5):
+    def __init__(self, channels, kernel_sizes=None, dropout_rate=0.5):
         """
         Args:
             channels: 输入特征图的通道数
+            kernel_sizes: 卷积核大小列表，默认为[13, 15, 17, 19, 21]
             dropout_rate: Dropout比率
         """
         super(MultiScaleAsymmetricDepthConv, self).__init__()
         self.channels = channels
         
-        # 13: 1x13和13x1非对称深度可分离卷积对
-        self.dconv1_13 = nn.Conv2d(channels, channels, kernel_size=(1, 13), padding=(0, 6), groups=channels)
-        self.dconv13_1 = nn.Conv2d(channels, channels, kernel_size=(13, 1), padding=(6, 0), groups=channels)
+        if kernel_sizes is None:
+            kernel_sizes = [13, 15, 17, 19, 21]
         
-        # 15: 1x15和15x1非对称深度可分离卷积对
-        self.dconv1_15 = nn.Conv2d(channels, channels, kernel_size=(1, 15), padding=(0, 7), groups=channels)
-        self.dconv15_1 = nn.Conv2d(channels, channels, kernel_size=(15, 1), padding=(7, 0), groups=channels)
+        self.kernel_sizes = kernel_sizes
         
-        # 17: 1x17和17x1非对称深度可分离卷积对
-        self.dconv1_17 = nn.Conv2d(channels, channels, kernel_size=(1, 17), padding=(0, 8), groups=channels)
-        self.dconv17_1 = nn.Conv2d(channels, channels, kernel_size=(17, 1), padding=(8, 0), groups=channels)
+        # 为每个卷积核大小创建非对称深度可分离卷积对
+        self.dconv1_k_list = nn.ModuleList()  # 存储1xk卷积
+        self.dconvk_1_list = nn.ModuleList()  # 存储kx1卷积
+        for kernel_size in kernel_sizes:
+            padding = kernel_size // 2
+            # 1xk非对称深度可分离卷积
+            self.dconv1_k_list.append(
+                nn.Conv2d(channels, channels, kernel_size=(1, kernel_size), padding=(0, padding), groups=channels)
+            )
+            # kx1非对称深度可分离卷积
+            self.dconvk_1_list.append(
+                nn.Conv2d(channels, channels, kernel_size=(kernel_size, 1), padding=(padding, 0), groups=channels)
+            )
         
-        # 19: 1x19和19x1非对称深度可分离卷积对
-        self.dconv1_19 = nn.Conv2d(channels, channels, kernel_size=(1, 19), padding=(0, 9), groups=channels)
-        self.dconv19_1 = nn.Conv2d(channels, channels, kernel_size=(19, 1), padding=(9, 0), groups=channels)
-        
-        # 21: 1x21和21x1非对称深度可分离卷积对
-        self.dconv1_21 = nn.Conv2d(channels, channels, kernel_size=(1, 21), padding=(0, 10), groups=channels)
-        self.dconv21_1 = nn.Conv2d(channels, channels, kernel_size=(21, 1), padding=(10, 0), groups=channels)
-        
-        # 1x1卷积用于特征融合
-        self.conv = nn.Conv2d(channels, channels, kernel_size=1, padding=0)
-        
-        # BatchNorm和激活函数
-        self.bn = nn.BatchNorm2d(channels)
-        self.gelu = nn.GELU()
-        self.dropout = nn.Dropout(dropout_rate)
+        # 不进行融合，直接返回拼接的多尺度特征
 
     def forward(self, x):
         """
         Args:
             x: 输入特征图 (B, C, H, W)
         Returns:
-            融合后的多尺度特征 (B, C, H, W)
+            拼接后的多尺度特征 (B, C*len(kernel_sizes)*2, H, W) - 保留所有非对称卷积对
         """
-        # 13: 1x13和13x1非对称深度可分离卷积对
-        x_1_13 = self.dconv1_13(x)  # (B, C, H, W)
-        x_13_1 = self.dconv13_1(x)  # (B, C, H, W)
+        # 对每个卷积核大小进行非对称深度可分离卷积
+        multi_scale_features = []
+        for dconv1_k, dconvk_1 in zip(self.dconv1_k_list, self.dconvk_1_list):
+            # 1xk和kx1非对称深度可分离卷积对
+            x_1_k = dconv1_k(x)  # (B, C, H, W)
+            x_k_1 = dconvk_1(x)  # (B, C, H, W)
+            multi_scale_features.append(x_1_k)
+            multi_scale_features.append(x_k_1)
         
-        # 15: 1x15和15x1非对称深度可分离卷积对
-        x_1_15 = self.dconv1_15(x)  # (B, C, H, W)
-        x_15_1 = self.dconv15_1(x)  # (B, C, H, W)
+        # 拼接所有多尺度特征，不进行融合
+        x_concat = torch.cat(multi_scale_features, dim=1)  # (B, C*len(kernel_sizes)*2, H, W)
         
-        # 17: 1x17和17x1非对称深度可分离卷积对
-        x_1_17 = self.dconv1_17(x)  # (B, C, H, W)
-        x_17_1 = self.dconv17_1(x)  # (B, C, H, W)
-        
-        # 19: 1x19和19x1非对称深度可分离卷积对
-        x_1_19 = self.dconv1_19(x)  # (B, C, H, W)
-        x_19_1 = self.dconv19_1(x)  # (B, C, H, W)
-        
-        # 21: 1x21和21x1非对称深度可分离卷积对
-        x_1_21 = self.dconv1_21(x)  # (B, C, H, W)
-        x_21_1 = self.dconv21_1(x)  # (B, C, H, W)
-        
-        # 将所有多尺度特征相加
-        x_sum = x_1_13 + x_13_1 + x_1_15 + x_15_1 + x_1_17 + x_17_1 + x_1_19 + x_19_1 + x_1_21 + x_21_1  # (B, C, H, W)
-        
-        # 通过1x1卷积进行特征融合
-        x_fusion = self.conv(x_sum)  # (B, C, H, W)
-        
-        # BatchNorm、激活和Dropout
-        x_fusion = self.bn(x_fusion)
-        x_fusion = self.gelu(x_fusion)
-        x_fusion = self.dropout(x_fusion)
-        
-        return x_fusion
+        return x_concat
 
