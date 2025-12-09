@@ -79,33 +79,25 @@ class Net(nn.Module):
         """
         特征融合层
         """
-        # 1x1卷积：将三个分支的特征融合
+        # 1x1卷积：将三个分支的特征融合，输出d_model-2维（添加坐标信息后为d_model维）
         self.fusion = nn.Sequential(
             nn.Conv2d(
-                fusion_input_channels, self.d_model, kernel_size=1, stride=1, padding=0
+                fusion_input_channels, self.d_model - 2, kernel_size=1, stride=1, padding=0
             ),
-            nn.BatchNorm2d(self.d_model),
+            nn.BatchNorm2d(self.d_model - 2),
             nn.GELU(),
             nn.Dropout(dropout_rate),
         )
 
         """
         Mamba处理层（单向）
-        注意：输入维度为d_model+2（包含坐标信息）
+        注意：输入维度为d_model（融合特征d_model-2 + 坐标信息2 = d_model）
         """
-        # Mamba层（输入维度包含坐标信息）
-        self.mamba = Mamba2(d_model=self.d_model + 2)
+        # Mamba层（输入维度为d_model，已包含坐标信息）
+        self.mamba = Mamba2(d_model=self.d_model)
         # Mamba后归一化层
         self.mamba_norm = nn.Sequential(
-            nn.LayerNorm(self.d_model + 2), nn.GELU(), nn.Dropout(dropout_rate)
-        )
-        
-        # 坐标信息投影层：将d_model+2维投影回d_model维
-        self.coord_projection = nn.Sequential(
-            nn.Linear(self.d_model + 2, self.d_model),
-            nn.LayerNorm(self.d_model),
-            nn.GELU(),
-            nn.Dropout(dropout_rate),
+            nn.LayerNorm(self.d_model), nn.GELU(), nn.Dropout(dropout_rate)
         )
 
         """
@@ -163,8 +155,8 @@ class Net(nn.Module):
         x_concat = torch.cat([x_branch1, x_branch2, x_branch3], dim=1)  # (1, 192, H, W)
 
         # 1x1卷积融合
-        x_fusion = self.fusion(x_concat)  # (1, d_model, H, W)
-        x_fusion = x_fusion.squeeze(0).permute(1, 2, 0)  # (H, W, d_model)
+        x_fusion = self.fusion(x_concat)  # (1, d_model - 2, H, W)
+        x_fusion = x_fusion.squeeze(0).permute(1, 2, 0)  # (H, W, d_model - 2)
 
         """
         添加坐标信息（x轴和y轴）
@@ -187,22 +179,19 @@ class Net(nn.Module):
         # 将坐标信息作为额外的通道拼接
         x_coords = x_coords.unsqueeze(-1)  # (H, W, 1)
         y_coords = y_coords.unsqueeze(-1)  # (H, W, 1)
-        x_fusion_with_coords = torch.cat([x_fusion, x_coords, y_coords], dim=-1)  # (H, W, d_model + 2)
+        x_fusion_with_coords = torch.cat([x_fusion, x_coords, y_coords], dim=-1)  # (H, W, d_model)
 
         """
         Mamba处理（单向）
         """
-        # Reshape为序列用于Mamba: (H, W, d_model + 2) -> (H*W, d_model + 2)
-        x_seq = x_fusion_with_coords.reshape(-1, self.d_model + 2).unsqueeze(0)  # (1, H*W, d_model + 2)
+        # Reshape为序列用于Mamba: (H, W, d_model) -> (H*W, d_model)
+        x_seq = x_fusion_with_coords.reshape(-1, self.d_model).unsqueeze(0)  # (1, H*W, d_model)
 
-        # Mamba处理（输入包含坐标信息）
-        x_mamba = self.mamba(x_seq)  # (1, H*W, d_model + 2)
+        # Mamba处理（输入包含坐标信息，维度为d_model）
+        x_mamba = self.mamba(x_seq)  # (1, H*W, d_model)
         # Mamba后归一化
-        x_mamba = self.mamba_norm(x_mamba)  # (1, H*W, d_model + 2)
-        x_mamba = x_mamba.squeeze(0)  # (H*W, d_model + 2)
-        
-        # 投影回d_model维（融合坐标信息）
-        x_mamba = self.coord_projection(x_mamba)  # (H*W, d_model)
+        x_mamba = self.mamba_norm(x_mamba)  # (1, H*W, d_model)
+        x_mamba = x_mamba.squeeze(0)  # (H*W, d_model)
 
         """
         分类
