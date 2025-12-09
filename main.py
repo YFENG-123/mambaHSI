@@ -21,7 +21,7 @@ program_start_time = time.time()
 
 ################################# 设置超参数 #################################
 num_epochs = 1000  # 训练轮数
-learning_rate = 2 * 1e-4
+learning_rate =  1e-1
 dropout_rate = 0.5
 ################################# 优化器参数 ##################################
 optimizer_type = "SGD"  # 优化器类型: "SGD", "Adam", "AdamW", "RMSprop", "Adagrad"
@@ -35,8 +35,8 @@ adam_beta2 = 0.999  # Adam的beta2参数
 adam_eps = 1e-8  # Adam的epsilon参数
 
 ################################# 学习率调度器参数 ##################################
-use_scheduler = False  # 是否使用学习率调度器
-scheduler_type = "None"  # 调度器类型: "ReduceLROnPlateau", "StepLR", "CosineAnnealingLR", "CosineAnnealingWarmRestarts", "ExponentialLR", "MultiStepLR"
+use_scheduler = True  # 是否使用学习率调度器
+scheduler_type = "CosineAnnealingWarmRestarts"  # 调度器类型: "ReduceLROnPlateau", "StepLR", "CosineAnnealingLR", "CosineAnnealingWarmRestarts", "ExponentialLR", "MultiStepLR"
 # ReduceLROnPlateau 参数（根据验证损失自动调整）
 scheduler_patience = 100  # 验证损失不下降的等待轮数
 scheduler_factor = 0.8  # 学习率衰减因子
@@ -47,7 +47,7 @@ gamma = 0.5  # 学习率衰减因子
 # CosineAnnealingLR 参数（余弦退火）
 T_max = num_epochs  # 余弦退火的周期
 # CosineAnnealingWarmRestarts 参数（带热重启的余弦退火）
-T_0 = 500  # 第一次重启的周期
+T_0 = 250  # 第一次重启的周期
 T_mult = 1  # 重启后周期的倍数（1表示每次重启周期相同，2表示每次重启周期翻倍）
 # ExponentialLR 参数（指数衰减）
 exp_gamma = 0.95  # 每个epoch的衰减因子

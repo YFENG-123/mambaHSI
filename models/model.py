@@ -45,7 +45,7 @@ class Net(nn.Module):
         self.branch1_square = DepthwiseSeparableSquareConv(
             in_channels=bands,
             out_channels=branch_out_channels,
-            kernel_sizes=[3, 5],  # 可配置列表
+            kernel_sizes=[3, 5, 7],  # 可配置列表
             dropout_rate=dropout_rate,
         )
 
