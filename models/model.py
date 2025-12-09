@@ -25,6 +25,8 @@ class Net(nn.Module):
         super().__init__()
         self.bands = bands
         self.d_model = d_model
+        self.image_x = image_x
+        self.image_y = image_y
 
         # 预处理层：归一化
         self.preprocess = nn.LayerNorm(bands)
@@ -89,12 +91,21 @@ class Net(nn.Module):
 
         """
         Mamba处理层（单向）
+        注意：输入维度为d_model+2（包含坐标信息）
         """
-        # Mamba层
-        self.mamba = Mamba2(d_model=self.d_model)
+        # Mamba层（输入维度包含坐标信息）
+        self.mamba = Mamba2(d_model=self.d_model + 2)
         # Mamba后归一化层
         self.mamba_norm = nn.Sequential(
-            nn.LayerNorm(self.d_model), nn.GELU(), nn.Dropout(dropout_rate)
+            nn.LayerNorm(self.d_model + 2), nn.GELU(), nn.Dropout(dropout_rate)
+        )
+        
+        # 坐标信息投影层：将d_model+2维投影回d_model维
+        self.coord_projection = nn.Sequential(
+            nn.Linear(self.d_model + 2, self.d_model),
+            nn.LayerNorm(self.d_model),
+            nn.GELU(),
+            nn.Dropout(dropout_rate),
         )
 
         """
@@ -156,16 +167,42 @@ class Net(nn.Module):
         x_fusion = x_fusion.squeeze(0).permute(1, 2, 0)  # (H, W, d_model)
 
         """
+        添加坐标信息（x轴和y轴）
+        """
+        # 创建坐标网格并归一化到[-1, 1]
+        # y坐标（行坐标）：从0到H-1，归一化到[-1, 1]
+        y_coords = torch.arange(h, dtype=torch.float32, device=x_fusion.device)
+        if h > 1:
+            y_coords = (y_coords / (h - 1) * 2 - 1).unsqueeze(1).expand(h, w)  # (H, W)
+        else:
+            y_coords = torch.zeros(h, w, dtype=torch.float32, device=x_fusion.device)
+        
+        # x坐标（列坐标）：从0到W-1，归一化到[-1, 1]
+        x_coords = torch.arange(w, dtype=torch.float32, device=x_fusion.device)
+        if w > 1:
+            x_coords = (x_coords / (w - 1) * 2 - 1).unsqueeze(0).expand(h, w)  # (H, W)
+        else:
+            x_coords = torch.zeros(h, w, dtype=torch.float32, device=x_fusion.device)
+        
+        # 将坐标信息作为额外的通道拼接
+        x_coords = x_coords.unsqueeze(-1)  # (H, W, 1)
+        y_coords = y_coords.unsqueeze(-1)  # (H, W, 1)
+        x_fusion_with_coords = torch.cat([x_fusion, x_coords, y_coords], dim=-1)  # (H, W, d_model + 2)
+
+        """
         Mamba处理（单向）
         """
-        # Reshape为序列用于Mamba: (H, W, d_model) -> (H*W, d_model)
-        x_seq = x_fusion.reshape(-1, self.d_model).unsqueeze(0)  # (1, H*W, d_model)
+        # Reshape为序列用于Mamba: (H, W, d_model + 2) -> (H*W, d_model + 2)
+        x_seq = x_fusion_with_coords.reshape(-1, self.d_model + 2).unsqueeze(0)  # (1, H*W, d_model + 2)
 
-        # Mamba处理
-        x_mamba = self.mamba(x_seq)  # (1, H*W, d_model)
+        # Mamba处理（输入包含坐标信息）
+        x_mamba = self.mamba(x_seq)  # (1, H*W, d_model + 2)
         # Mamba后归一化
-        x_mamba = self.mamba_norm(x_mamba)  # (1, H*W, d_model)
-        x_mamba = x_mamba.squeeze(0).reshape(-1, self.d_model)  # (H*W, d_model)
+        x_mamba = self.mamba_norm(x_mamba)  # (1, H*W, d_model + 2)
+        x_mamba = x_mamba.squeeze(0)  # (H*W, d_model + 2)
+        
+        # 投影回d_model维（融合坐标信息）
+        x_mamba = self.coord_projection(x_mamba)  # (H*W, d_model)
 
         """
         分类
