@@ -19,7 +19,7 @@ class Net(nn.Module):
         num_classes=17,
         bands=200,
         dropout_rate=0.5,
-        d_model=256,
+        d_model=128,
     ):
         super().__init__()
         self.bands = bands
@@ -55,14 +55,46 @@ class Net(nn.Module):
             dropout_rate=dropout_rate
         )
         
-        # 计算融合层的输入通道数
+        # 计算各分支的输出通道数
         # 分支1: bands * len(dilations)
         # 分支2: bands * len(kernel_sizes) * 2 (每个kernel_size有2个卷积：1xk和kx1)
         # 分支3: bands * len(kernel_sizes)
         branch1_output_channels = bands * len(self.branch1_aspp.dilated_convs)
         branch2_output_channels = bands * len(self.branch2_asymmetric.kernel_sizes) * 2
         branch3_output_channels = bands * len(self.branch3_square.kernel_sizes)
-        fusion_input_channels = branch1_output_channels + branch2_output_channels + branch3_output_channels
+        
+        # 统一压缩维度：将每个分支的输出压缩到64通道
+        branch_compressed_channels = 64
+        
+        """
+        分支压缩层：在每个分支输出前用1x1卷积将维度统一压缩到64
+        """
+        # 分支1压缩层
+        self.branch1_compress = nn.Sequential(
+            nn.Conv2d(branch1_output_channels, branch_compressed_channels, kernel_size=1, stride=1, padding=0),
+            nn.BatchNorm2d(branch_compressed_channels),
+            nn.GELU(),
+            nn.Dropout(dropout_rate),
+        )
+        
+        # 分支2压缩层
+        self.branch2_compress = nn.Sequential(
+            nn.Conv2d(branch2_output_channels, branch_compressed_channels, kernel_size=1, stride=1, padding=0),
+            nn.BatchNorm2d(branch_compressed_channels),
+            nn.GELU(),
+            nn.Dropout(dropout_rate),
+        )
+        
+        # 分支3压缩层
+        self.branch3_compress = nn.Sequential(
+            nn.Conv2d(branch3_output_channels, branch_compressed_channels, kernel_size=1, stride=1, padding=0),
+            nn.BatchNorm2d(branch_compressed_channels),
+            nn.GELU(),
+            nn.Dropout(dropout_rate),
+        )
+        
+        # 计算融合层的输入通道数（压缩后）
+        fusion_input_channels = branch_compressed_channels * 3  # 64 * 3 = 192
 
         """
         特征融合层
@@ -130,18 +162,24 @@ class Net(nn.Module):
         """
         # 分支1：深度可分离ASPP（不进行融合，保留所有膨胀卷积分支）
         x_branch1 = self.branch1_aspp(x_attended)  # (1, bands*len(dilations), H, W)
+        # 压缩到64通道
+        x_branch1 = self.branch1_compress(x_branch1)  # (1, 64, H, W)
         
         # 分支2：多尺度非对称深度可分离卷积（不进行融合，保留所有非对称卷积对）
         x_branch2 = self.branch2_asymmetric(x_attended)  # (1, bands*len(kernel_sizes)*2, H, W)
+        # 压缩到64通道
+        x_branch2 = self.branch2_compress(x_branch2)  # (1, 64, H, W)
         
         # 分支3：深度可分离方形卷积（可配置列表，输出通道数=bands*len(kernel_sizes)）
         x_branch3 = self.branch3_square(x_attended)  # (1, bands*len(kernel_sizes), H, W)
+        # 压缩到64通道
+        x_branch3 = self.branch3_compress(x_branch3)  # (1, 64, H, W)
 
         """
         特征融合
         """
-        # 拼接三个分支的特征
-        x_concat = torch.cat([x_branch1, x_branch2, x_branch3], dim=1)  # (1, fusion_input_channels, H, W)
+        # 拼接三个分支的特征（每个分支64通道，共192通道）
+        x_concat = torch.cat([x_branch1, x_branch2, x_branch3], dim=1)  # (1, 192, H, W)
         
         # 1x1卷积融合
         x_fusion = self.fusion(x_concat)  # (1, d_model, H, W)

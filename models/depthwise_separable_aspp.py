@@ -21,20 +21,16 @@ class DepthwiseSeparableASPP(nn.Module):
         self.dilated_convs = nn.ModuleList()
         for dilation in dilations:
             padding = dilation
-            conv = nn.Sequential(
-                # 深度卷积
-                nn.Conv2d(
-                    channels,
-                    channels,
-                    kernel_size=3,
-                    stride=1,
-                    padding=padding,
-                    dilation=dilation,
-                    groups=channels,
-                    bias=False
-                ),
-                nn.BatchNorm2d(channels),
-                nn.ReLU(inplace=True)
+            # 深度卷积（不进行norm和激活，保持原始特征）
+            conv = nn.Conv2d(
+                channels,
+                channels,
+                kernel_size=3,
+                stride=1,
+                padding=padding,
+                dilation=dilation,
+                groups=channels,
+                bias=False
             )
             self.dilated_convs.append(conv)
         

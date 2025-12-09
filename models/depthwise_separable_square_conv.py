@@ -27,11 +27,15 @@ class DepthwiseSeparableSquareConv(nn.Module):
         self.square_convs = nn.ModuleList()
         for kernel_size in kernel_sizes:
             padding = kernel_size // 2
-            conv = nn.Sequential(
-                nn.Conv2d(channels, channels, kernel_size=kernel_size, stride=1, padding=padding, groups=channels, bias=False),
-                nn.BatchNorm2d(channels),
-                nn.GELU(),
-                nn.Dropout(dropout_rate),
+            # 深度可分离卷积（不进行norm和dropout，保持原始特征）
+            conv = nn.Conv2d(
+                channels, 
+                channels, 
+                kernel_size=kernel_size, 
+                stride=1, 
+                padding=padding, 
+                groups=channels, 
+                bias=False
             )
             self.square_convs.append(conv)
 
