@@ -3,4 +3,5 @@ images/
 logs/
 weights/
 __pycache__/
-results*/
+results/
+results*.txt

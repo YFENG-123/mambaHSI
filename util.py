@@ -1,10 +1,12 @@
-import scipy.io as sio
+import os
+import time
+import random
 import numpy as np
+import scipy.io as sio
+import matplotlib.pyplot as plt
+
 import torch
 from torch.utils.data import TensorDataset, DataLoader
-import random
-import matplotlib.pyplot as plt
-import os
 
 
 def set_seed(seed):
@@ -141,7 +143,6 @@ def load_data(
     )
 
 
-# 使用一个函数完成上面三个功能
 def run_model(model, loader, criterion, optimizer, mode):
     if mode == "train":
         model.train()
@@ -154,10 +155,12 @@ def run_model(model, loader, criterion, optimizer, mode):
         model.eval()
         with torch.no_grad():
             return step(model, loader, criterion, optimizer, mode)
-    raise ValueError(f"Invalid mode: {mode}")
+    else:
+        raise ValueError(f"Invalid mode: {mode}")
 
 
 def step(model, loader, criterion, optimizer, mode):
+    start_time = time.time()
     total_loss = 0.0
     correct_label = 0
     total_label = 0
@@ -188,7 +191,7 @@ def step(model, loader, criterion, optimizer, mode):
         loss = criterion(outputs_masked, label_masked)
         total_loss += loss.item()
 
-        if mode == "train":
+        if mode == "train":  # 训练模式下，计算梯度并更新模型参数
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -198,7 +201,7 @@ def step(model, loader, criterion, optimizer, mode):
         correct_label += predicted.eq(label_masked).sum().item()
         total_label += label_masked.size(0)
 
-        if mode == "test":
+        if mode == "test":  # 测试模式下，保存预测结果用于后续分析
             # 保存预测结果用于后续分析
             all_predictions.append(predicted.cpu().numpy())
             all_label_masked.append(label_masked.cpu().numpy())
@@ -210,6 +213,8 @@ def step(model, loader, criterion, optimizer, mode):
     avg_loss = total_loss / len(loader)
     acc = 100.0 * correct_label / total_label
 
+    end_time = time.time()
+    elapsed_time = end_time - start_time
     return (
         avg_loss,
         acc,
@@ -217,10 +222,11 @@ def step(model, loader, criterion, optimizer, mode):
         all_label_masked,
         full_prediction_map,
         full_test_label,
+        elapsed_time,
     )
 
 
-def calculate_result(
+def calculate_result( # 计算测试集结果
     avg_test_loss,
     test_accuracy,
     all_test_predictions,
@@ -257,7 +263,7 @@ def calculate_result(
     return oa, aa, kappa, cm, class_accuracies
 
 
-def generate_picture(
+def generate_picture( # 生成测试集结果可视化图片
     confusion_matrix,
     num_classes,
     prediction_map,
@@ -412,13 +418,15 @@ def generate_picture(
             )
 
     plt.tight_layout()
-    confusion_matrix_path = os.path.join(images_dir, f"confusion_matrix_{seed_idx + 1}.png")
+    confusion_matrix_path = os.path.join(
+        images_dir, f"confusion_matrix_{seed_idx + 1}.png"
+    )
     plt.savefig(confusion_matrix_path, dpi=300, bbox_inches="tight")
     print(f"混淆矩阵已保存为: {confusion_matrix_path}")
     plt.close()
 
 
-def write_results_to_txt(
+def write_results_to_txt( # 将实验结果写入txt文件
     results_txt_path,
     data_name,
     experiment_results,
@@ -448,9 +456,9 @@ def write_results_to_txt(
     参数:
         results_txt_path: 文件路径
         data_name: 数据集名称
-        experiment_results: 每次实验的结果列表，每个元素包含：
+        experiment_results: 每个种子的结果列表，每个元素包含：
             - seed: 随机种子
-            - seed_idx: 实验序号
+            - seed_idx: 种子序号
             - total_training_time: 训练时间
             - test_loss: 测试集损失
             - oa: OA值
@@ -464,7 +472,7 @@ def write_results_to_txt(
             - best_model_type: 最佳模型类型（Train/Val）
         average_oa, average_aa, average_kappa, average_performance, average_training_time, average_test_loss, average_best_model_loss, average_best_model_acc, average_best_model_epoch: 平均值
         std_oa, std_aa, std_kappa, std_performance, std_training_time, std_test_loss, std_best_model_loss, std_best_model_acc, std_best_model_epoch: 标准差
-        num_experiments: 实验次数
+        num_experiments: 种子数量
     """
     # 以追加方式打开文件
     results_file = open(results_txt_path, "a", encoding="utf-8")
@@ -472,7 +480,7 @@ def write_results_to_txt(
     # 写入数据集实验结果
     results_file.write(f"\n{'=' * 120}\n")
     results_file.write(
-        f"数据集: {data_name} - 实验结果汇总 (共{num_experiments}次实验)\n"
+        f"数据集: {data_name} - 实验结果汇总 (共{num_experiments}个种子)\n"
     )
     results_file.write(f"{'=' * 120}\n\n")
 
@@ -481,7 +489,7 @@ def write_results_to_txt(
     results_file.write("-" * 120 + "\n")
     # 使用固定宽度确保对齐
     results_file.write(
-        f"{'实验':<6} {'种子':<8} {'训练时间(秒)':<14} {'测试Loss':<12} {'OA(%)':<10} {'AA(%)':<10} {'Kappa':<10} {'最佳模型':<30} {'最佳轮次':<10}\n"
+        f"{'种子':<6} {'种子值':<8} {'训练时间(秒)':<14} {'测试Loss':<12} {'OA(%)':<10} {'AA(%)':<10} {'Kappa':<10} {'最佳模型':<30} {'最佳轮次':<10}\n"
     )
     results_file.write("-" * 120 + "\n")
     for exp_result in experiment_results:
@@ -498,8 +506,8 @@ def write_results_to_txt(
             f"{exp_result['best_model_epoch']:<10}\n"
         )
     results_file.write("-" * 120 + "\n")
-    # 确定最佳模型类型的显示（如果所有实验类型相同则显示，否则显示"Mixed"）
-    best_model_types = [exp['best_model_type'] for exp in experiment_results]
+    # 确定最佳模型类型的显示（如果所有种子类型相同则显示，否则显示"Mixed"）
+    best_model_types = [exp["best_model_type"] for exp in experiment_results]
     if len(set(best_model_types)) == 1:
         avg_best_model_type = best_model_types[0]
     else:
@@ -516,7 +524,9 @@ def write_results_to_txt(
         f"{average_best_model_epoch:<10.1f}\n"
     )
     # 标准差行中，最佳模型类型列显示标准差（loss和acc的标准差）
-    std_best_model_info = f"Loss:{std_best_model_loss:.4f} Acc:{std_best_model_acc:.2f}%"
+    std_best_model_info = (
+        f"Loss:{std_best_model_loss:.4f} Acc:{std_best_model_acc:.2f}%"
+    )
     results_file.write(
         f"{'标准差':<6} {'-':<8} "
         f"{std_training_time:<14.2f} "
@@ -538,12 +548,12 @@ def write_results_to_txt(
         results_file.write("各类别精度对比表:\n")
         results_file.write("-" * 120 + "\n")
         # 表头 - 使用固定宽度确保对齐
-        header = f"{'实验':<6} {'种子':<8}"
+        header = f"{'种子':<6} {'种子值':<8}"
         for i in range(num_classes):
             header += f" {'类别' + str(i + 1) + '(%)':<12}"
         results_file.write(header + "\n")
         results_file.write("-" * 120 + "\n")
-        # 每次实验的各类别精度 - 使用固定宽度确保对齐
+        # 每个种子的各类别精度 - 使用固定宽度确保对齐
         for exp_result in experiment_results:
             row = f"{exp_result['seed_idx']:<6} {exp_result['seed']:<8}"
             for acc in exp_result["class_accuracies"]:

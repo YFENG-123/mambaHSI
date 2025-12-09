@@ -4,7 +4,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.tensorboard import SummaryWriter
 from model1 import Net1
 from util import (
     load_data,
@@ -14,6 +13,10 @@ from util import (
     set_seed,
     write_results_to_txt,
 )
+from log import Log
+
+################################# 记录实验开始时间 ##################################
+program_start_time = time.time()
 
 ################################# 设置超参数 #################################
 num_epochs = 1000  # 训练轮数
@@ -45,22 +48,20 @@ test_split_rate = 0.90
 print(f"训练轮数:{num_epochs}\t\t学习率:{learning_rate}\t\tDropout率:{dropout_rate}")
 print(f"验证集比例:{val_split_rate}\t\t测试集比例:{test_split_rate}")
 
-################################# 记录程序开始时间 ##################################
-program_start_time = time.time()
-
-################################# 初始化TensorBoard ##################################
+################################# 创建结果目录结构 ##################################
 timestamp = time.strftime("%Y%m%d-%H%M%S")
-log_dir = os.path.join("logs", timestamp)
-writer = SummaryWriter(log_dir=log_dir)
-print(f"TensorBoard 日志目录: {log_dir}, 使用 tensorboard --logdir {log_dir} 查看日志")
+results_base_dir = os.path.join("results", timestamp)
+print(f"结果目录: {results_base_dir}")
 
-################################# 创建权重文件目录 ##################################
-weights_dir = os.path.join("weights", timestamp)
-print(f"权重文件目录: {weights_dir}")
+weights_base_dir = os.path.join(results_base_dir, "weights")
+os.makedirs(weights_base_dir, exist_ok=True)
+print(f"权重文件目录: {weights_base_dir}")
 
-################################# 创建结果记录txt文件 ##################################
-results_txt_path = f"results_{timestamp}.txt"
-print(f"结果记录文件: {results_txt_path}")
+images_base_dir = os.path.join(results_base_dir, "images")
+os.makedirs(images_base_dir, exist_ok=True)
+print(f"图像文件目录: {images_base_dir}")
+
+results_txt_path = os.path.join(results_base_dir, f"results_{timestamp}.txt")
 with open(results_txt_path, "w", encoding="utf-8") as results_file:
     results_file.write("=" * 120 + "\n")
     results_file.write(f"实验结果记录 - {timestamp}\n")
@@ -73,16 +74,27 @@ with open(results_txt_path, "w", encoding="utf-8") as results_file:
     results_file.write(f"  测试集比例: {test_split_rate}\n")
     results_file.write(f"  随机种子: {seeds}\n")
     results_file.write("=" * 120 + "\n\n")
+print(f"结果记录文件: {results_txt_path}")
 
-################################# 训练模型 ##################################
-for image_path, gt_path in zip(image_paths, gt_paths):  # 遍历所有数据集
+log_base_dir = os.path.join(results_base_dir, "logs")
+os.makedirs(log_base_dir, exist_ok=True)
+logger = Log(log_base_dir, timestamp)
+print(
+    f"TensorBoard 日志目录: {log_base_dir}, 使用 tensorboard --logdir {log_base_dir} 查看日志"
+)
+
+################################# 遍历所有数据集和种子 ##################################
+for image_path, gt_path in zip(image_paths, gt_paths):
     data_name = image_path.split("/")[-1].split(".")[0]  # 获取数据集名称
-    experiment_results = []  # 存储每次实验的详细结果
-    for seed_idx, seed in enumerate(seeds):  # 遍历所有随机种子
-        set_seed(seed)  # 设置随机种子
-        print(f"数据集:{data_name}\t第{seed_idx + 1}次实验\t\t随机种子:{seed}")
-
-        ################################# 加载数据 #################################
+    experiment_results = []  # 存储每个种子的详细结果
+    weights_dir = os.path.join(weights_base_dir, data_name)
+    images_dir = os.path.join(images_base_dir, data_name)
+    os.makedirs(weights_dir, exist_ok=True)
+    os.makedirs(images_dir, exist_ok=True)
+    for seed_idx, seed in enumerate(seeds):
+        set_seed(seed)  # 设置种子
+        print(f"数据集:{data_name}\t第{seed_idx + 1}个种子\t\t随机种子:{seed}")
+        ############################### 每个种子重新随机初始化数据集分割 ##################################
         (
             train_loader,
             val_loader,
@@ -99,8 +111,7 @@ for image_path, gt_path in zip(image_paths, gt_paths):  # 遍历所有数据集
             val_split_rate=val_split_rate,
             test_split_rate=test_split_rate,
         )
-        ################################# 初始化模型 ################################
-
+        ############################### 每个种子重新随机初始化模型参数 ##################################
         model = Net1(
             image_x=image_x,
             image_y=image_y,
@@ -110,10 +121,7 @@ for image_path, gt_path in zip(image_paths, gt_paths):  # 遍历所有数据集
         ).to("cuda")
         criterion = nn.CrossEntropyLoss()
         optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-
-        ################################# 开始一次实验 ##################################
-
-        start_time = time.time()
+        ################################# 开始一个种子的训练和验证 ##################################
         best_train_loss = float("inf")
         best_train_acc = 0.0
         best_train_epoch = 0
@@ -122,11 +130,10 @@ for image_path, gt_path in zip(image_paths, gt_paths):  # 遍历所有数据集
         best_val_epoch = 0
         avg_val_loss = float("inf")
         val_acc = 0.0
+        start_time = time.time()  # 记录每个种子开始时间
         for epoch in range(num_epochs):
             print(f"{data_name}_{seed_idx + 1}_Epoch[{epoch + 1}/{num_epochs}]")
-
-            ############################### 训练阶段 ##################################
-            train_start_time = time.time()
+            ############################### 每个epoch的训练阶段 ##################################
             (
                 avg_train_loss,
                 train_acc,
@@ -134,77 +141,51 @@ for image_path, gt_path in zip(image_paths, gt_paths):  # 遍历所有数据集
                 all_label_masked,
                 full_prediction_map,
                 full_test_label,
-            ) = run_model(  # 运行训练集
-                model, train_loader, criterion, optimizer, "train"
+                train_time,
+            ) = run_model(model, train_loader, criterion, optimizer, "train")
+            logger.each_train(  # 记录每次训练的结果到TensorBoard
+                data_name,
+                seed_idx + 1,
+                epoch + 1,
+                avg_train_loss,
+                train_acc,
+                train_time,
             )
-            train_end_time = time.time()
-            train_time = train_end_time - train_start_time
-            ############################### 打印并写入训练结果 ##################################
             print(  # 打印训练集结果
                 f"    Train -> Loss: {avg_train_loss:.4f}, Accuracy: {train_acc:.2f}%, Time: {train_time:.2f}s"
             )
-            writer.add_scalars(  # TensorBoard 写入 Loss
-                f"Loss_{timestamp}_{data_name}",
-                {f"Train_{seed_idx + 1}": avg_train_loss},
+            ############################### 每个epoch的验证阶段 ##################################
+            if val_split_rate <= 0:
+                continue
+            (
+                avg_val_loss,
+                val_acc,
+                all_predictions,
+                all_label_masked,
+                full_prediction_map,
+                full_test_label,
+                val_time,
+            ) = run_model(model, val_loader, criterion, optimizer, "val")
+            logger.each_val(  # 记录每次验证的结果到TensorBoard
+                data_name,
+                seed_idx + 1,
                 epoch + 1,
+                avg_val_loss,
+                val_acc,
+                val_time,
             )
-            writer.add_scalars(  # TensorBoard 写入 Accuracy
-                f"Accuracy_{timestamp}_{data_name}",
-                {f"Train_{seed_idx + 1}": train_acc},
-                epoch + 1,
+            print(  # 打印验证集结果
+                f"    Val   -> Loss: {avg_val_loss:.4f}, Accuracy: {val_acc:.2f}%, Time: {val_time:.2f}s"
             )
-            writer.add_scalars(  # TensorBoard 写入训练时间
-                f"Time_{timestamp}_{data_name}",
-                {f"Train_{seed_idx + 1}": train_time},
-                epoch + 1,
-            )
-
-            ############################### 验证阶段（如果存在验证集） ##################################
-            if val_split_rate > 0:  # 如果存在验证集
-                val_start_time = time.time()
-                (
-                    avg_val_loss,
-                    val_acc,
-                    all_predictions,
-                    all_label_masked,
-                    full_prediction_map,
-                    full_test_label,
-                ) = run_model(  # 运行验证集
-                    model, val_loader, criterion, optimizer, "val"
-                )
-                val_end_time = time.time()
-                val_time = val_end_time - val_start_time
-
-                ############################### 打印并写入验证结果（如果存在验证集） ##################################
-                print(  # 打印验证集结果
-                    f"    Val   -> Loss: {avg_val_loss:.4f}, Accuracy: {val_acc:.2f}%, Time: {val_time:.2f}s"
-                )
-                writer.add_scalars(  # TensorBoard 写入 Loss
-                    f"Loss_{timestamp}_{data_name}",
-                    {f"Val_{seed_idx + 1}": avg_val_loss},
-                    epoch + 1,
-                )
-                writer.add_scalars(  # TensorBoard 写入 Accuracy
-                    f"Accuracy_{timestamp}_{data_name}",
-                    {f"Val_{seed_idx + 1}": val_acc},
-                    epoch + 1,
-                )
-                writer.add_scalars(  # TensorBoard 写入验证时间
-                    f"Time_{timestamp}_{data_name}",
-                    {f"Val_{seed_idx + 1}": val_time},
-                    epoch + 1,
-                )
-
-            ############################### 保存当前最佳模型 ##################################
+            ############################### 每个epoch保存当前最佳模型 ##################################
             if val_split_rate > 0:
                 if avg_val_loss < best_val_loss:
                     best_val_loss = avg_val_loss
                     best_val_acc = val_acc
                     best_val_epoch = epoch + 1
-                    os.makedirs(os.path.join(weights_dir, data_name), exist_ok=True)
                     torch.save(
                         model.state_dict(),
-                        os.path.join(weights_dir, data_name, f"{seed_idx + 1}.pth"),
+                        os.path.join(weights_dir, f"{seed_idx + 1}.pth"),
                     )
                     print(
                         f"Best model saved at Epoch {best_val_epoch} with Val Loss: {best_val_loss:.4f} Val Accuracy: {best_val_acc:.2f}%"
@@ -214,19 +195,17 @@ for image_path, gt_path in zip(image_paths, gt_paths):  # 遍历所有数据集
                     best_train_loss = avg_train_loss
                     best_train_acc = train_acc
                     best_train_epoch = epoch + 1
-                    os.makedirs(os.path.join(weights_dir, data_name), exist_ok=True)
                     torch.save(
                         model.state_dict(),
-                        os.path.join(weights_dir, data_name, f"{seed_idx + 1}.pth"),
+                        os.path.join(weights_dir, f"{seed_idx + 1}.pth"),
                     )
                     print(
                         f"Best model saved at Epoch {best_train_epoch} with Train Loss: {best_train_loss:.4f} Train Accuracy: {best_train_acc:.2f}%"
                     )
-        end_time = time.time()
-        total_training_time = end_time - start_time
+        end_time = time.time()  # 记录每个种子结束时间
+        total_training_time = end_time - start_time  # 计算每个种子训练时间
         print(f"Training time: {total_training_time:.2f} seconds")
-
-        ################################# 记录该次实验的最佳模型信息 ##################################
+        ################################# 记录一个种子的最佳模型信息 ##################################
         # 确定保存模型时的loss和acc
         if val_split_rate > 0:
             saved_loss = best_val_loss
@@ -238,23 +217,17 @@ for image_path, gt_path in zip(image_paths, gt_paths):  # 遍历所有数据集
             saved_acc = best_train_acc
             saved_epoch = best_train_epoch
             saved_type = "Train"
-
-        ################################# 写入TensorBoard：最佳模型时的loss和acc ##################################
-        # 合并所有数据集到单个表格，每条曲线代表一个数据集
-        writer.add_scalars(
-            f"Best_Model_Loss_{timestamp}",
-            {data_name: saved_loss},
-            seed_idx + 1,  # x轴：实验序号
+        logger.each_seed(  # 记录一个种子的最佳模型信息到TensorBoard
+            data_name,
+            seed_idx + 1,
+            saved_loss,
+            saved_acc,
+            saved_epoch,
+            saved_type,
         )
-        writer.add_scalars(
-            f"Best_Model_Accuracy_{timestamp}",
-            {data_name: saved_acc},
-            seed_idx + 1,  # x轴：实验序号
-        )
-
-        ################################# 开始该次实验的测试评估 ##################################
-        model.load_state_dict(  # 加载最佳模型
-            torch.load(os.path.join(weights_dir, data_name, f"{seed_idx + 1}.pth"))
+        ################################# 完成一个种子训练和验证后的测试评估 ##################################
+        model.load_state_dict(  # 加载一个种子的最佳模型
+            torch.load(os.path.join(weights_dir, f"{seed_idx + 1}.pth"))
         )
         (
             avg_test_loss,
@@ -263,7 +236,8 @@ for image_path, gt_path in zip(image_paths, gt_paths):  # 遍历所有数据集
             all_test_label_masked,
             full_prediction_map,
             full_test_label,
-        ) = run_model(model, test_loader, criterion, optimizer, "test")  # 运行测试集
+            test_time,
+        ) = run_model(model, test_loader, criterion, optimizer, "test")
         oa, aa, kappa, confusion_matrix, class_accuracies = (  # 计算测试集结果
             calculate_result(
                 avg_test_loss,
@@ -273,10 +247,33 @@ for image_path, gt_path in zip(image_paths, gt_paths):  # 遍历所有数据集
                 num_classes,
             )
         )
-
-        ################################# 记录该次实验测试评估的结果 ##################################
-        # 统一收集本次实验的所有信息，用于TensorBoard和txt记录
-        experiment_results.append(
+        ################################# 记录并打印一个种子的训练和验证后的测试评估的结果 ##################################
+        generate_picture(  # 生成一个种子的图片
+            confusion_matrix,
+            num_classes,
+            full_prediction_map,
+            full_test_label,
+            gt,
+            data_name,
+            seed_idx,
+            images_dir=images_dir,
+        )
+        print(f"数据集: {data_name}，第{seed_idx + 1}个种子，测试集结果:")
+        print(f"测试集 Loss: {avg_test_loss:.4f}")
+        print(f"测试集 OA: {oa:.2f}%")
+        print(f"测试集 AA: {aa:.2f}%")
+        print(f"测试集 Kappa: {kappa:.2f}")
+        logger.each_test(  # 记录一个种子的测试结果到TensorBoard
+            data_name,
+            seed_idx + 1,
+            oa,
+            aa,
+            kappa,
+            (oa + aa + kappa) / 3.0,
+            total_training_time,
+            class_accuracies,
+        )
+        experiment_results.append(  # 统一收集一个种子的所有信息，用于一个数据集所有种子的平均结果计算
             {
                 "seed": seed,
                 "seed_idx": seed_idx + 1,
@@ -294,67 +291,7 @@ for image_path, gt_path in zip(image_paths, gt_paths):  # 遍历所有数据集
             }
         )
 
-        ################################# 打印该次实验测试评估的结果 ##################################
-        print(f"数据集: {data_name}，第{seed_idx + 1}次实验，测试集结果:")
-        print(f"测试集 Loss: {avg_test_loss:.4f}")
-        print(f"测试集 OA: {oa:.2f}%")
-        print(f"测试集 AA: {aa:.2f}%")
-        print(f"测试集 Kappa: {kappa:.2f}")
-
-        ################################# 写入TensorBoard：该次实验的 OA、AA、Kappa、Performance、训练时间 ##################################
-        # 合并所有数据集到单个表格，每条曲线代表一个数据集
-        writer.add_scalars(
-            f"OA_{timestamp}",
-            {data_name: oa},
-            seed_idx + 1,  # x轴：实验序号
-        )
-        writer.add_scalars(
-            f"AA_{timestamp}",
-            {data_name: aa},
-            seed_idx + 1,  # x轴：实验序号
-        )
-        writer.add_scalars(
-            f"Kappa_{timestamp}",
-            {data_name: kappa},
-            seed_idx + 1,  # x轴：实验序号
-        )
-        writer.add_scalars(
-            f"Performance_{timestamp}",
-            {data_name: (oa + aa + kappa) / 3.0},
-            seed_idx + 1,  # x轴：实验序号
-        )
-        writer.add_scalars(
-            f"Training_Time_{timestamp}",
-            {data_name: total_training_time},
-            seed_idx + 1,  # x轴：实验序号
-        )
-        # 写入每个类别的精度到TensorBoard（合并为一个表格）
-        # x轴：类别序号，y轴：准确率，每条曲线代表一次实验
-        for i, acc in enumerate(class_accuracies):
-            writer.add_scalars(
-                f"Class_Accuracy_{timestamp}_{data_name}",
-                {f"Experiment_{seed_idx + 1}": acc},
-                i + 1,  # x轴：class序号
-            )
-
-        ################################# 可视化该次实验测试评估的结果 ##################################
-
-        # 创建images文件夹（根据timestamp创建子目录）
-        images_dir = os.path.join("images", timestamp, data_name)
-        os.makedirs(images_dir, exist_ok=True)
-        # 生成图片
-        generate_picture(
-            confusion_matrix,
-            num_classes,
-            full_prediction_map,
-            full_test_label,
-            gt,
-            data_name,
-            seed_idx,
-            images_dir=images_dir,
-        )
-
-    ################################# 计算该数据集所有实验的平均结果 ##################################
+    ################################# 计算一个数据集所有种子的平均结果 ##################################
     # 从experiment_results中提取数据计算平均值和标准差
     oa_values = [exp["oa"] for exp in experiment_results]
     aa_values = [exp["aa"] for exp in experiment_results]
@@ -365,7 +302,6 @@ for image_path, gt_path in zip(image_paths, gt_paths):  # 遍历所有数据集
     best_model_loss_values = [exp["best_model_loss"] for exp in experiment_results]
     best_model_acc_values = [exp["best_model_acc"] for exp in experiment_results]
     best_model_epoch_values = [exp["best_model_epoch"] for exp in experiment_results]
-
     average_oa = np.mean(oa_values)
     average_aa = np.mean(aa_values)
     average_kappa = np.mean(kappa_values)
@@ -384,44 +320,21 @@ for image_path, gt_path in zip(image_paths, gt_paths):  # 遍历所有数据集
     std_best_model_loss = np.std(best_model_loss_values)
     std_best_model_acc = np.std(best_model_acc_values)
     std_best_model_epoch = np.std(best_model_epoch_values)
-
-    ################################# 打印该数据集所有实验的平均结果 ##################################
+    ################################# 打印一个数据集所有种子的平均结果 ##################################
     print(f"数据集: {data_name}，平均OA: {average_oa:.2f}%")
     print(f"数据集: {data_name}，平均AA: {average_aa:.2f}%")
     print(f"数据集: {data_name}，平均Kappa: {average_kappa:.2f}")
     print(f"数据集: {data_name}，平均性能: {average_performance:.2f}")
     print(f"数据集: {data_name}，平均训练时间: {average_training_time:.2f}秒")
-
-    ################################# 写入TensorBoard：该数据集所有实验的平均结果 ##################################
-    # 将平均结果添加到原始值表格的最后一个点后面第5个点位置
-    avg_position = len(seeds) + 5
-    writer.add_scalars(
-        f"OA_{timestamp}",
-        {f"{data_name}_Average": average_oa},
-        avg_position,
+    logger.each_dataset_average(
+        data_name,
+        len(seeds),
+        average_oa,
+        average_aa,
+        average_kappa,
+        average_performance,
+        average_training_time,
     )
-    writer.add_scalars(
-        f"AA_{timestamp}",
-        {f"{data_name}_Average": average_aa},
-        avg_position,
-    )
-    writer.add_scalars(
-        f"Kappa_{timestamp}",
-        {f"{data_name}_Average": average_kappa},
-        avg_position,
-    )
-    writer.add_scalars(
-        f"Performance_{timestamp}",
-        {f"{data_name}_Average": average_performance},
-        avg_position,
-    )
-    writer.add_scalars(
-        f"Training_Time_{timestamp}",
-        {f"{data_name}_Average": average_training_time},
-        avg_position,
-    )
-
-    ################################# 统一写入txt文件：该数据集所有实验的平均结果（表格形式） ##################################
     write_results_to_txt(
         results_txt_path=results_txt_path,
         data_name=data_name,
@@ -446,29 +359,27 @@ for image_path, gt_path in zip(image_paths, gt_paths):  # 遍历所有数据集
         std_best_model_epoch=std_best_model_epoch,
         num_experiments=len(seeds),
     )
+logger.flush()
+logger.close()
 
-writer.flush()
-writer.close()
-
-################################# 计算并打印程序总运行时间 ##################################
+################################# 计算并打印实验的总运行时间 ##################################
 program_end_time = time.time()
-total_program_time = program_end_time - program_start_time
-hours = int(total_program_time // 3600)
-minutes = int((total_program_time % 3600) // 60)
-seconds = total_program_time % 60
 
-# 将总运行时间写入txt文件
+total_seconds = program_end_time - program_start_time
+hours = int(total_seconds // 3600)
+minutes = int((total_seconds % 3600) // 60)
+seconds = total_seconds % 60
+
+# 将所有数据集的总运行时间写入txt文件
 with open(results_txt_path, "a", encoding="utf-8") as results_file:
     results_file.write(f"\n{'=' * 120}\n")
-    results_file.write("程序总运行时间:\n")
+    results_file.write("所有数据集的总运行时间:\n")
     results_file.write(
-        f"  {hours}小时 {minutes}分钟 {seconds:.2f}秒 (总计: {total_program_time:.2f}秒)\n"
+        f"  {hours}小时 {minutes}分钟 {seconds:.2f}秒 (总计: {total_seconds:.2f}秒)\n"
     )
     results_file.write(f"{'=' * 120}\n")
 
-print(f"\n所有结果已保存到: {results_txt_path}")
-print(f"\n{'=' * 60}")
+print(f"\n所有数据集的结果已保存到: {results_txt_path}")
 print(
-    f"程序总运行时间: {hours}小时 {minutes}分钟 {seconds:.2f}秒 ({total_program_time:.2f}秒)"
+    f"所有数据集的总运行时间: {hours}小时 {minutes}分钟 {seconds:.2f}秒 ({total_seconds:.2f}秒)"
 )
-print(f"{'=' * 60}")
