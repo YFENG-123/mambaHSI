@@ -3,6 +3,7 @@ import time
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.optim import lr_scheduler
 from models import Net
 from util import (
     load_data,
@@ -22,6 +23,22 @@ program_start_time = time.time()
 num_epochs = 1000  # 训练轮数
 learning_rate = 0.0005
 dropout_rate = 0.50
+# 学习率调度器参数（使用PyTorch自带的torch.optim.lr_scheduler）
+use_scheduler = True  # 是否使用学习率调度器
+scheduler_type = "ReduceLROnPlateau"  # 调度器类型: "ReduceLROnPlateau", "StepLR", "CosineAnnealingLR", "ExponentialLR", "MultiStepLR"
+# ReduceLROnPlateau 参数（根据验证损失自动调整）
+scheduler_patience = 10  # 验证损失不下降的等待轮数
+scheduler_factor = 0.5  # 学习率衰减因子
+scheduler_min_lr = 1e-6  # 最小学习率
+# StepLR 参数（每隔固定轮数降低学习率）
+step_size = 100  # 每多少轮降低一次学习率
+gamma = 0.5  # 学习率衰减因子
+# CosineAnnealingLR 参数（余弦退火）
+T_max = num_epochs  # 余弦退火的周期
+# ExponentialLR 参数（指数衰减）
+exp_gamma = 0.95  # 每个epoch的衰减因子
+# MultiStepLR 参数（在指定里程碑降低学习率）
+milestones = [300, 600, 800]  # 降低学习率的epoch列表
 seeds = [21, 22, 80, 443, 445, 554, 3306, 5900, 8080, 25565]
 image_paths = [
     # "data/HuaiLai.mat",
@@ -47,6 +64,8 @@ val_split_rate = 0.05
 test_split_rate = 0.90
 print(f"训练轮数:{num_epochs}\t\t学习率:{learning_rate}\t\tDropout率:{dropout_rate}")
 print(f"验证集比例:{val_split_rate}\t\t测试集比例:{test_split_rate}")
+if use_scheduler:
+    print(f"学习率调度器:{scheduler_type}\t\t启用动态学习率")
 
 ################################# 创建结果目录结构 ##################################
 timestamp = time.strftime("%Y%m%d-%H%M%S")
@@ -73,6 +92,23 @@ with open(results_txt_path, "w", encoding="utf-8") as results_file:
     results_file.write(f"  验证集比例: {val_split_rate}\n")
     results_file.write(f"  测试集比例: {test_split_rate}\n")
     results_file.write(f"  随机种子: {seeds}\n")
+    if use_scheduler:
+        results_file.write(f"  学习率调度器: {scheduler_type} (PyTorch自带)\n")
+        if scheduler_type == "ReduceLROnPlateau":
+            results_file.write(f"    耐心值: {scheduler_patience}\n")
+            results_file.write(f"    衰减因子: {scheduler_factor}\n")
+            results_file.write(f"    最小学习率: {scheduler_min_lr}\n")
+        elif scheduler_type == "StepLR":
+            results_file.write(f"    步长: {step_size}\n")
+            results_file.write(f"    衰减因子: {gamma}\n")
+        elif scheduler_type == "CosineAnnealingLR":
+            results_file.write(f"    周期: {T_max}\n")
+            results_file.write(f"    最小学习率: {scheduler_min_lr}\n")
+        elif scheduler_type == "ExponentialLR":
+            results_file.write(f"    衰减因子: {exp_gamma}\n")
+        elif scheduler_type == "MultiStepLR":
+            results_file.write(f"    里程碑: {milestones}\n")
+            results_file.write(f"    衰减因子: {gamma}\n")
     results_file.write("=" * 120 + "\n\n")
 print(f"结果记录文件: {results_txt_path}")
 
@@ -121,6 +157,47 @@ for image_path, gt_path in zip(image_paths, gt_paths):
         ).to("cuda")
         criterion = nn.CrossEntropyLoss()
         optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+        ################################# 创建学习率调度器（使用PyTorch自带的lr_scheduler）##################################
+        scheduler = None
+        if use_scheduler:
+            if scheduler_type == "ReduceLROnPlateau" and val_split_rate > 0:
+                # ReduceLROnPlateau: 根据验证损失自动调整学习率（PyTorch自带）
+                scheduler = lr_scheduler.ReduceLROnPlateau(
+                    optimizer,
+                    mode='min',
+                    factor=scheduler_factor,
+                    patience=scheduler_patience,
+                    min_lr=scheduler_min_lr
+                )
+            elif scheduler_type == "StepLR":
+                # StepLR: 每隔固定轮数降低学习率（PyTorch自带）
+                scheduler = lr_scheduler.StepLR(
+                    optimizer,
+                    step_size=step_size,
+                    gamma=gamma
+                )
+            elif scheduler_type == "CosineAnnealingLR":
+                # CosineAnnealingLR: 余弦退火学习率（PyTorch自带）
+                scheduler = lr_scheduler.CosineAnnealingLR(
+                    optimizer,
+                    T_max=T_max,
+                    eta_min=scheduler_min_lr
+                )
+            elif scheduler_type == "ExponentialLR":
+                # ExponentialLR: 指数衰减学习率（PyTorch自带）
+                scheduler = lr_scheduler.ExponentialLR(
+                    optimizer,
+                    gamma=exp_gamma
+                )
+            elif scheduler_type == "MultiStepLR":
+                # MultiStepLR: 在指定里程碑降低学习率（PyTorch自带）
+                scheduler = lr_scheduler.MultiStepLR(
+                    optimizer,
+                    milestones=milestones,
+                    gamma=gamma
+                )
+            else:
+                print(f"警告: 未知的调度器类型 {scheduler_type}，请使用: ReduceLROnPlateau, StepLR, CosineAnnealingLR, ExponentialLR, MultiStepLR")
         ################################# 开始一个种子的训练和验证 ##################################
         best_train_loss = float("inf")
         best_train_acc = 0.0
@@ -156,6 +233,11 @@ for image_path, gt_path in zip(image_paths, gt_paths):
             )
             ############################### 每个epoch的验证阶段 ##################################
             if val_split_rate <= 0:
+                # 如果没有验证集，在训练后更新学习率（适用于StepLR和CosineAnnealingLR）
+                if scheduler is not None and scheduler_type != "ReduceLROnPlateau":
+                    scheduler.step()
+                    current_lr = optimizer.param_groups[0]['lr']
+                    print(f"    当前学习率: {current_lr:.6f}")
                 continue
             (
                 avg_val_loss,
@@ -177,6 +259,14 @@ for image_path, gt_path in zip(image_paths, gt_paths):
             print(  # 打印验证集结果
                 f"    Val   -> Loss: {avg_val_loss:.4f}, Accuracy: {val_acc:.2f}%, Time: {val_time:.2f}s"
             )
+            ############################### 更新学习率 ##################################
+            if scheduler is not None:
+                if scheduler_type == "ReduceLROnPlateau" and val_split_rate > 0:
+                    scheduler.step(int(avg_val_loss))  # 根据验证损失更新学习率
+                else:
+                    scheduler.step()  # 根据epoch更新学习率
+                current_lr = optimizer.param_groups[0]['lr']
+                print(f"    当前学习率: {current_lr:.6f}")
             ############################### 每个epoch保存当前最佳模型 ##################################
             if val_split_rate > 0:
                 if avg_val_loss < best_val_loss:
