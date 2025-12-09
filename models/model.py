@@ -10,7 +10,7 @@ from .depthwise_separable_square_conv import DepthwiseSeparableSquareConv
 class Net(nn.Module):
     """
     高光谱图像分类网络
-    使用归一化 -> 通道注意力 -> 空间注意力 -> 双分支（深度可分离ASPP + 多尺度非对称深度可分离卷积） -> 双向Mamba -> 分类
+    使用归一化 -> 通道注意力 -> 空间注意力 -> 三分支（深度可分离ASPP + 多尺度非对称深度可分离卷积 + 方形卷积） -> 单向Mamba -> 分类
     """
 
     def __init__(
@@ -84,27 +84,13 @@ class Net(nn.Module):
         )
 
         """
-        Mamba处理层
+        Mamba处理层（单向）
         """
-        # Mamba正向层
-        self.mamba_forward = Mamba2(d_model=self.d_model)
-        # Mamba正向归一化层
-        self.mamba_forward_norm = nn.Sequential(
+        # Mamba层
+        self.mamba = Mamba2(d_model=self.d_model)
+        # Mamba后归一化层
+        self.mamba_norm = nn.Sequential(
             nn.LayerNorm(self.d_model), nn.GELU(), nn.Dropout(dropout_rate)
-        )
-
-        # Mamba反向层
-        self.mamba_backward = Mamba2(d_model=self.d_model)
-        # Mamba反向归一化层
-        self.mamba_backward_norm = nn.Sequential(
-            nn.LayerNorm(self.d_model), nn.GELU(), nn.Dropout(dropout_rate)
-        )
-
-        # Mamba融合归一化层
-        self.mamba_norm_fusion = nn.Sequential(
-            nn.LayerNorm(self.d_model),
-            nn.GELU(),
-            nn.Dropout(dropout_rate),
         )
 
         """
@@ -166,28 +152,15 @@ class Net(nn.Module):
         x_fusion = x_fusion.squeeze(0).permute(1, 2, 0)  # (H, W, d_model)
 
         """
-        Mamba处理
+        Mamba处理（单向）
         """
         # Reshape为序列用于Mamba: (H, W, d_model) -> (H*W, d_model)
         x_seq = x_fusion.reshape(-1, self.d_model).unsqueeze(0)  # (1, H*W, d_model)
 
-        # Mamba正向处理
-        x_mamba_forward = self.mamba_forward(x_seq)  # (1, H*W, d_model)
-        # 正向Mamba后归一化
-        x_mamba_forward = self.mamba_forward_norm(x_mamba_forward)  # (1, H*W, d_model)
-
-        # Mamba反向处理（反转序列）
-        x_mamba_backward = torch.flip(x_seq, dims=[1])  # (1, H*W, d_model)
-        x_mamba_backward = self.mamba_backward(x_mamba_backward)  # (1, H*W, d_model)
-        # 反向Mamba后归一化
-        x_mamba_backward = self.mamba_backward_norm(
-            x_mamba_backward
-        )  # (1, H*W, d_model)
-        x_mamba_backward = torch.flip(x_mamba_backward, dims=[1])  # (1, H*W, d_model)
-
-        # 将正向和反向结果相加
-        x_mamba = x_mamba_forward + x_mamba_backward  # (1, H*W, d_model)
-        x_mamba = self.mamba_norm_fusion(x_mamba)  # (1, H*W, d_model)
+        # Mamba处理
+        x_mamba = self.mamba(x_seq)  # (1, H*W, d_model)
+        # Mamba后归一化
+        x_mamba = self.mamba_norm(x_mamba)  # (1, H*W, d_model)
         x_mamba = x_mamba.squeeze(0).reshape(-1, self.d_model)  # (H*W, d_model)
 
         """

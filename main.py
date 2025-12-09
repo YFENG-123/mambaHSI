@@ -24,10 +24,10 @@ num_epochs = 1000  # 训练轮数
 learning_rate = 0.0005
 dropout_rate = 0.50
 # 学习率调度器参数（使用PyTorch自带的torch.optim.lr_scheduler）
-use_scheduler = True  # 是否使用学习率调度器
+use_scheduler = False  # 是否使用学习率调度器
 scheduler_type = "ReduceLROnPlateau"  # 调度器类型: "ReduceLROnPlateau", "StepLR", "CosineAnnealingLR", "ExponentialLR", "MultiStepLR"
 # ReduceLROnPlateau 参数（根据验证损失自动调整）
-scheduler_patience = 10  # 验证损失不下降的等待轮数
+scheduler_patience = 50  # 验证损失不下降的等待轮数
 scheduler_factor = 0.5  # 学习率衰减因子
 scheduler_min_lr = 1e-6  # 最小学习率
 # StepLR 参数（每隔固定轮数降低学习率）
