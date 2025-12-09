@@ -21,20 +21,23 @@ program_start_time = time.time()
 
 ################################# 设置超参数 #################################
 num_epochs = 1000  # 训练轮数
-learning_rate = 0.0005
-dropout_rate = 0.50
+learning_rate = 1e-3
+dropout_rate = 0.75
 # 学习率调度器参数（使用PyTorch自带的torch.optim.lr_scheduler）
-use_scheduler = False  # 是否使用学习率调度器
-scheduler_type = "ReduceLROnPlateau"  # 调度器类型: "ReduceLROnPlateau", "StepLR", "CosineAnnealingLR", "ExponentialLR", "MultiStepLR"
+use_scheduler = True  # 是否使用学习率调度器
+scheduler_type = "ReduceLROnPlateau"  # 调度器类型: "ReduceLROnPlateau", "StepLR", "CosineAnnealingLR", "CosineAnnealingWarmRestarts", "ExponentialLR", "MultiStepLR"
 # ReduceLROnPlateau 参数（根据验证损失自动调整）
-scheduler_patience = 50  # 验证损失不下降的等待轮数
+scheduler_patience = 100  # 验证损失不下降的等待轮数
 scheduler_factor = 0.5  # 学习率衰减因子
-scheduler_min_lr = 1e-6  # 最小学习率
+scheduler_min_lr = 1e-4  # 最小学习率
 # StepLR 参数（每隔固定轮数降低学习率）
 step_size = 100  # 每多少轮降低一次学习率
 gamma = 0.5  # 学习率衰减因子
 # CosineAnnealingLR 参数（余弦退火）
 T_max = num_epochs  # 余弦退火的周期
+# CosineAnnealingWarmRestarts 参数（带热重启的余弦退火）
+T_0 = 50  # 第一次重启的周期
+T_mult = 2  # 重启后周期的倍数（1表示每次重启周期相同，2表示每次重启周期翻倍）
 # ExponentialLR 参数（指数衰减）
 exp_gamma = 0.95  # 每个epoch的衰减因子
 # MultiStepLR 参数（在指定里程碑降低学习率）
@@ -103,6 +106,10 @@ with open(results_txt_path, "w", encoding="utf-8") as results_file:
             results_file.write(f"    衰减因子: {gamma}\n")
         elif scheduler_type == "CosineAnnealingLR":
             results_file.write(f"    周期: {T_max}\n")
+            results_file.write(f"    最小学习率: {scheduler_min_lr}\n")
+        elif scheduler_type == "CosineAnnealingWarmRestarts":
+            results_file.write(f"    初始周期: {T_0}\n")
+            results_file.write(f"    周期倍数: {T_mult}\n")
             results_file.write(f"    最小学习率: {scheduler_min_lr}\n")
         elif scheduler_type == "ExponentialLR":
             results_file.write(f"    衰减因子: {exp_gamma}\n")
@@ -183,6 +190,14 @@ for image_path, gt_path in zip(image_paths, gt_paths):
                     T_max=T_max,
                     eta_min=scheduler_min_lr
                 )
+            elif scheduler_type == "CosineAnnealingWarmRestarts":
+                # CosineAnnealingWarmRestarts: 带热重启的余弦退火学习率（PyTorch自带）
+                scheduler = lr_scheduler.CosineAnnealingWarmRestarts(
+                    optimizer,
+                    T_0=T_0,
+                    T_mult=T_mult,
+                    eta_min=scheduler_min_lr
+                )
             elif scheduler_type == "ExponentialLR":
                 # ExponentialLR: 指数衰减学习率（PyTorch自带）
                 scheduler = lr_scheduler.ExponentialLR(
@@ -197,7 +212,7 @@ for image_path, gt_path in zip(image_paths, gt_paths):
                     gamma=gamma
                 )
             else:
-                print(f"警告: 未知的调度器类型 {scheduler_type}，请使用: ReduceLROnPlateau, StepLR, CosineAnnealingLR, ExponentialLR, MultiStepLR")
+                print(f"警告: 未知的调度器类型 {scheduler_type}，请使用: ReduceLROnPlateau, StepLR, CosineAnnealingLR, CosineAnnealingWarmRestarts, ExponentialLR, MultiStepLR")
         ################################# 开始一个种子的训练和验证 ##################################
         best_train_loss = float("inf")
         best_train_acc = 0.0
