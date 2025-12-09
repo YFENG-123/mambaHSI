@@ -109,50 +109,57 @@ def analyze_model_components(model, input_shape=(145, 145, 200)):
     
     print(f"注意力模块总计: {attention_params:,} 参数")
     
-    # 分支1: ASPP
-    branch1_params = count_parameters(model.branch1_aspp)
-    param_breakdown['分支1 (DepthwiseSeparableASPP)'] = branch1_params
-    print(f"\n分支1 (DepthwiseSeparableASPP): {branch1_params:,} 参数")
-    dilations = model.branch1_aspp.dilated_convs
+    # 分支1: 方形卷积
+    branch1_params = count_parameters(model.branch1_square)
+    param_breakdown['分支1 (DepthwiseSeparableSquareConv)'] = branch1_params
+    print(f"\n分支1 (DepthwiseSeparableSquareConv): {branch1_params:,} 参数")
+    kernel_sizes1 = model.branch1_square.kernel_sizes
+    for i, conv in enumerate(model.branch1_square.square_convs):
+        conv_params = count_parameters(conv)
+        print(f"  └─ 方形卷积 {i+1} (kernel={kernel_sizes1[i]}): {conv_params:,} 参数")
+    if hasattr(model.branch1_square, 'compress') and model.branch1_square.compress is not None:
+        compress_params = count_parameters(model.branch1_square.compress)
+        print(f"  └─ 压缩层: {compress_params:,} 参数")
+    
+    # 分支2: ASPP
+    branch2_params = count_parameters(model.branch2_aspp)
+    param_breakdown['分支2 (DepthwiseSeparableASPP)'] = branch2_params
+    print(f"\n分支2 (DepthwiseSeparableASPP): {branch2_params:,} 参数")
+    dilations = model.branch2_aspp.dilated_convs
     for i, conv in enumerate(dilations):
         conv_params = count_parameters(conv)
-        print(f"  └─ 膨胀卷积 {i+1} (dilation={model.branch1_aspp.dilated_convs[i].dilation[0]}): {conv_params:,} 参数")
+        print(f"  └─ 膨胀卷积 {i+1} (dilation={model.branch2_aspp.dilated_convs[i].dilation[0]}): {conv_params:,} 参数")
+    if hasattr(model.branch2_aspp, 'compress') and model.branch2_aspp.compress is not None:
+        compress_params = count_parameters(model.branch2_aspp.compress)
+        print(f"  └─ 压缩层: {compress_params:,} 参数")
     
-    # 分支2: 非对称卷积
-    branch2_params = count_parameters(model.branch2_asymmetric)
-    param_breakdown['分支2 (MultiScaleAsymmetricDepthConv)'] = branch2_params
-    print(f"\n分支2 (MultiScaleAsymmetricDepthConv): {branch2_params:,} 参数")
-    kernel_sizes = model.branch2_asymmetric.kernel_sizes
+    # 分支3: 非对称卷积
+    branch3_params = count_parameters(model.branch3_asymmetric)
+    param_breakdown['分支3 (MultiScaleAsymmetricDepthConv)'] = branch3_params
+    print(f"\n分支3 (MultiScaleAsymmetricDepthConv): {branch3_params:,} 参数")
+    kernel_sizes3 = model.branch3_asymmetric.kernel_sizes
     for i, (dconv1_k, dconvk_1) in enumerate(zip(
-        model.branch2_asymmetric.dconv1_k_list,
-        model.branch2_asymmetric.dconvk_1_list
+        model.branch3_asymmetric.dconv1_k_list,
+        model.branch3_asymmetric.dconvk_1_list
     )):
         conv1_k_params = count_parameters(dconv1_k)
         convk_1_params = count_parameters(dconvk_1)
-        print(f"  └─ 非对称卷积对 {i+1} (kernel={kernel_sizes[i]}): {conv1_k_params + convk_1_params:,} 参数")
-        print(f"      ├─ 1x{kernel_sizes[i]}: {conv1_k_params:,} 参数")
-        print(f"      └─ {kernel_sizes[i]}x1: {convk_1_params:,} 参数")
-    
-    # 分支3: 方形卷积
-    branch3_params = count_parameters(model.branch3_square)
-    param_breakdown['分支3 (DepthwiseSeparableSquareConv)'] = branch3_params
-    print(f"\n分支3 (DepthwiseSeparableSquareConv): {branch3_params:,} 参数")
-    kernel_sizes3 = model.branch3_square.kernel_sizes
-    for i, conv in enumerate(model.branch3_square.square_convs):
-        conv_params = count_parameters(conv)
-        print(f"  └─ 方形卷积 {i+1} (kernel={kernel_sizes3[i]}): {conv_params:,} 参数")
+        print(f"  └─ 非对称卷积对 {i+1} (kernel={kernel_sizes3[i]}): {conv1_k_params + convk_1_params:,} 参数")
+        print(f"      ├─ 1x{kernel_sizes3[i]}: {conv1_k_params:,} 参数")
+        print(f"      └─ {kernel_sizes3[i]}x1: {convk_1_params:,} 参数")
+    if hasattr(model.branch3_asymmetric, 'compress') and model.branch3_asymmetric.compress is not None:
+        compress_params = count_parameters(model.branch3_asymmetric.compress)
+        print(f"  └─ 压缩层: {compress_params:,} 参数")
     
     # 融合层
     fusion_params = count_parameters(model.fusion)
     param_breakdown['融合层'] = fusion_params
     print(f"\n融合层: {fusion_params:,} 参数")
     
-    # 计算融合层输入通道数
-    branch1_out = bands * len(dilations)
-    branch2_out = bands * len(kernel_sizes) * 2
-    branch3_out = bands * len(kernel_sizes3)
-    fusion_input = branch1_out + branch2_out + branch3_out
-    print(f"  融合层输入通道数: {fusion_input} = {branch1_out} + {branch2_out} + {branch3_out}")
+    # 计算融合层输入通道数（压缩后）
+    # 每个分支都压缩到64通道
+    fusion_input = 64 * 3  # 192
+    print(f"  融合层输入通道数: {fusion_input} = 64 + 64 + 64 (每个分支压缩后)")
     print(f"  融合层输出通道数: {model.d_model}")
     
     # 融合层详细参数
@@ -222,9 +229,13 @@ def analyze_model_components(model, input_shape=(145, 145, 200)):
         suggestions.append(
             f"⚠️  融合层输入通道数过大 ({fusion_input})，建议：\n"
             f"   - 减少ASPP膨胀率数量（当前{len(dilations)}个）\n"
-            f"   - 减少非对称卷积核数量（当前{len(kernel_sizes)}个）\n"
-            f"   - 减少方形卷积核数量（当前{len(kernel_sizes3)}个）\n"
+            f"   - 减少非对称卷积核数量（当前{len(kernel_sizes3)}个）\n"
+            f"   - 减少方形卷积核数量（当前{len(kernel_sizes1)}个）\n"
             f"   - 或在各分支内部先进行通道压缩"
+        )
+    else:
+        suggestions.append(
+            f"✓ 融合层输入通道数已优化 ({fusion_input})，通过模块内部压缩层实现"
         )
     
     # 检查Mamba参数量
@@ -259,6 +270,10 @@ def analyze_model_components(model, input_shape=(145, 145, 200)):
         suggestions.append(
             f"✓ 三个分支参数量占比很小 ({branch_ratio:.2f}%)，主要开销在融合层和Mamba层"
         )
+    else:
+        suggestions.append(
+            f"✓ 三个分支参数量占比 ({branch_ratio:.2f}%)，包含内部压缩层"
+        )
     
     if suggestions:
         for i, suggestion in enumerate(suggestions, 1):
@@ -280,7 +295,7 @@ if __name__ == "__main__":
         num_classes=17,
         bands=200,
         dropout_rate=0.5,
-        d_model=256
+        d_model=128
     )
     
     # 分析模型

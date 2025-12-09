@@ -8,10 +8,11 @@ class DepthwiseSeparableASPP(nn.Module):
     将ASPP中的普通卷积替换为深度可分离卷积
     输入输出通道数保持不变（深度可分离状态）
     """
-    def __init__(self, channels, dilations=[1, 6, 12, 18], dropout_rate=0.1):
+    def __init__(self, in_channels, out_channels, dilations=[1, 6, 12, 18], dropout_rate=0.1):
         """
         Args:
-            channels: 输入输出通道数（深度可分离，通道数不变）
+            in_channels: 输入通道数
+            out_channels: 输出通道数
             dilations: 膨胀率列表，默认为[1, 6, 12, 18]
             dropout_rate: Dropout比率
         """
@@ -23,34 +24,44 @@ class DepthwiseSeparableASPP(nn.Module):
             padding = dilation
             # 深度卷积（不进行norm和激活，保持原始特征）
             conv = nn.Conv2d(
-                channels,
-                channels,
+                in_channels,
+                in_channels,
                 kernel_size=3,
                 stride=1,
                 padding=padding,
                 dilation=dilation,
-                groups=channels,
+                groups=in_channels,
                 bias=False
             )
             self.dilated_convs.append(conv)
         
-        # 不进行融合，直接返回拼接的多尺度特征
+        # 1x1卷积压缩层：将拼接后的特征压缩到out_channels
+        intermediate_channels = in_channels * len(dilations)
+        self.compress = nn.Sequential(
+            nn.Conv2d(intermediate_channels, out_channels, kernel_size=1, stride=1, padding=0),
+            nn.BatchNorm2d(out_channels),
+            nn.GELU(),
+            nn.Dropout(dropout_rate),
+        )
 
     def forward(self, x):
         """
         Args:
-            x: 输入特征图 (B, C, H, W)
+            x: 输入特征图 (B, in_channels, H, W)
         Returns:
-            拼接后的多尺度特征 (B, C*len(dilations), H, W) - 保留所有膨胀卷积分支
+            压缩后的特征 (B, out_channels, H, W)
         """
         # 多个膨胀卷积分支
         dilated_features = []
         for dilated_conv in self.dilated_convs:
-            feature = dilated_conv(x)  # (B, C, H, W)
+            feature = dilated_conv(x)  # (B, in_channels, H, W)
             dilated_features.append(feature)
         
-        # 拼接所有膨胀卷积分支，不进行融合
-        x_concat = torch.cat(dilated_features, dim=1)  # (B, C*len(dilations), H, W)
+        # 拼接所有膨胀卷积分支
+        x_concat = torch.cat(dilated_features, dim=1)  # (B, in_channels*len(dilations), H, W)
         
-        return x_concat
+        # 压缩到out_channels
+        x_out = self.compress(x_concat)  # (B, out_channels, H, W)
+        
+        return x_out
 

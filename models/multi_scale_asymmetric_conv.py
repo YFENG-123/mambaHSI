@@ -7,15 +7,15 @@ class MultiScaleAsymmetricDepthConv(nn.Module):
     多尺度非对称深度可分离卷积模块
     使用可配置大小的非对称深度可分离卷积核进行深度可分离卷积
     """
-    def __init__(self, channels, kernel_sizes=None, dropout_rate=0.5):
+    def __init__(self, in_channels, out_channels, kernel_sizes=None, dropout_rate=0.5):
         """
         Args:
-            channels: 输入特征图的通道数
+            in_channels: 输入通道数
+            out_channels: 输出通道数
             kernel_sizes: 卷积核大小列表，默认为[13, 15, 17, 19, 21]
             dropout_rate: Dropout比率
         """
         super(MultiScaleAsymmetricDepthConv, self).__init__()
-        self.channels = channels
         
         if kernel_sizes is None:
             kernel_sizes = [13, 15, 17, 19, 21]
@@ -29,33 +29,43 @@ class MultiScaleAsymmetricDepthConv(nn.Module):
             padding = kernel_size // 2
             # 1xk非对称深度可分离卷积
             self.dconv1_k_list.append(
-                nn.Conv2d(channels, channels, kernel_size=(1, kernel_size), padding=(0, padding), groups=channels)
+                nn.Conv2d(in_channels, in_channels, kernel_size=(1, kernel_size), padding=(0, padding), groups=in_channels)
             )
             # kx1非对称深度可分离卷积
             self.dconvk_1_list.append(
-                nn.Conv2d(channels, channels, kernel_size=(kernel_size, 1), padding=(padding, 0), groups=channels)
+                nn.Conv2d(in_channels, in_channels, kernel_size=(kernel_size, 1), padding=(padding, 0), groups=in_channels)
             )
         
-        # 不进行融合，直接返回拼接的多尺度特征
+        # 1x1卷积压缩层：将拼接后的特征压缩到out_channels
+        intermediate_channels = in_channels * len(kernel_sizes) * 2
+        self.compress = nn.Sequential(
+            nn.Conv2d(intermediate_channels, out_channels, kernel_size=1, stride=1, padding=0),
+            nn.BatchNorm2d(out_channels),
+            nn.GELU(),
+            nn.Dropout(dropout_rate),
+        )
 
     def forward(self, x):
         """
         Args:
-            x: 输入特征图 (B, C, H, W)
+            x: 输入特征图 (B, in_channels, H, W)
         Returns:
-            拼接后的多尺度特征 (B, C*len(kernel_sizes)*2, H, W) - 保留所有非对称卷积对
+            压缩后的特征 (B, out_channels, H, W)
         """
         # 对每个卷积核大小进行非对称深度可分离卷积
         multi_scale_features = []
         for dconv1_k, dconvk_1 in zip(self.dconv1_k_list, self.dconvk_1_list):
             # 1xk和kx1非对称深度可分离卷积对
-            x_1_k = dconv1_k(x)  # (B, C, H, W)
-            x_k_1 = dconvk_1(x)  # (B, C, H, W)
+            x_1_k = dconv1_k(x)  # (B, in_channels, H, W)
+            x_k_1 = dconvk_1(x)  # (B, in_channels, H, W)
             multi_scale_features.append(x_1_k)
             multi_scale_features.append(x_k_1)
         
-        # 拼接所有多尺度特征，不进行融合
-        x_concat = torch.cat(multi_scale_features, dim=1)  # (B, C*len(kernel_sizes)*2, H, W)
+        # 拼接所有多尺度特征
+        x_concat = torch.cat(multi_scale_features, dim=1)  # (B, in_channels*len(kernel_sizes)*2, H, W)
         
-        return x_concat
+        # 压缩到out_channels
+        x_out = self.compress(x_concat)  # (B, out_channels, H, W)
+        
+        return x_out
 
