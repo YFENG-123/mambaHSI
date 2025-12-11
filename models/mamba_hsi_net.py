@@ -35,22 +35,20 @@ class FeatureExtractionBranch(nn.Module):
         """
         super(FeatureExtractionBranch, self).__init__()
         self.use_residual = use_residual
+        self.in_channels = in_channels
+        self.out_channels = out_channels
         
-        # 如果输入输出通道数不同，需要投影层
-        if in_channels != out_channels:
-            self.proj = nn.Sequential(
+        # 特征提取模块（接收原始输入，输出out_channels）
+        self.feature_extractor = module
+        
+        # 如果使用残差连接且输入输出通道数不同，需要投影层用于残差连接
+        if use_residual and in_channels != out_channels:
+            self.residual_proj = nn.Sequential(
                 nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0),
                 nn.BatchNorm2d(out_channels),
             )
         else:
-            self.proj = nn.Identity()
-        
-        # 特征提取模块
-        self.feature_extractor = module
-        
-        # 残差连接
-        if use_residual:
-            self.feature_extractor = ResidualBlock(self.feature_extractor)
+            self.residual_proj = None
     
     def forward(self, x):
         """
@@ -59,17 +57,18 @@ class FeatureExtractionBranch(nn.Module):
         Returns:
             提取的特征 (B, out_channels, H, W)
         """
-        # 投影到目标通道数
-        x_proj = self.proj(x)  # (B, out_channels, H, W)
+        # 特征提取（模块内部处理输入输出通道转换）
+        output = self.feature_extractor(x)  # (B, out_channels, H, W)
         
-        # 特征提取（可能包含残差连接）
+        # 残差连接：在输出和投影后的输入之间
         if self.use_residual:
-            output = self.feature_extractor(x_proj)  # (B, out_channels, H, W)
-        else:
-            output = self.feature_extractor(x)  # (B, out_channels, H, W)
-            # 如果通道数不同，需要投影
-            if x.shape[1] != output.shape[1]:
-                output = self.proj(output)
+            if self.residual_proj is not None:
+                # 投影输入到输出通道数，然后与输出相加
+                x_proj = self.residual_proj(x)  # (B, out_channels, H, W)
+                output = output + x_proj  # (B, out_channels, H, W)
+            else:
+                # 输入输出通道数相同，直接相加
+                output = output + x  # (B, out_channels, H, W)
         
         return output
 
