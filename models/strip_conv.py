@@ -92,17 +92,30 @@ class MultiScaleStripConvolution(nn.Module):
         super(MultiScaleStripConvolution, self).__init__()
         
         self.kernel_sizes = kernel_sizes
+        self.num_scales = len(kernel_sizes)
+        
+        # 计算每个尺度的输出通道数，确保总和等于out_channels
+        channels_per_scale = out_channels // self.num_scales
+        remainder = out_channels % self.num_scales
         
         # 为每个尺度创建条状卷积
         self.strip_convs = nn.ModuleList()
-        for kernel_size in kernel_sizes:
+        for i, kernel_size in enumerate(kernel_sizes):
+            # 将余数分配给前几个尺度
+            scale_out_channels = channels_per_scale + (1 if i < remainder else 0)
             self.strip_convs.append(
-                StripConvolution(in_channels, out_channels // len(kernel_sizes), kernel_size, dropout_rate)
+                StripConvolution(in_channels, scale_out_channels, kernel_size, dropout_rate)
             )
         
-        # 融合多尺度特征
+        # 计算实际拼接后的通道数
+        actual_combined_channels = sum(
+            channels_per_scale + (1 if i < remainder else 0) 
+            for i in range(self.num_scales)
+        )
+        
+        # 融合多尺度特征（输入通道数为实际拼接后的通道数）
         self.fusion = nn.Sequential(
-            nn.Conv2d(out_channels, out_channels, kernel_size=1, stride=1, padding=0),
+            nn.Conv2d(actual_combined_channels, out_channels, kernel_size=1, stride=1, padding=0),
             nn.BatchNorm2d(out_channels),
             nn.GELU(),
             nn.Dropout(dropout_rate),
