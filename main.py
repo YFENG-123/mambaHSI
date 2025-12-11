@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim import lr_scheduler
-from models import Net
+from models import MambaHSINet
 from util import (
     load_data,
     calculate_seed_result,
@@ -24,7 +24,7 @@ num_epochs = 1000  # 训练轮数
 learning_rate =  1e-1
 dropout_rate = 0.5
 ################################# 优化器参数 ##################################
-optimizer_type = "SGD"  # 优化器类型: "SGD", "Adam", "AdamW", "RMSprop", "Adagrad"
+optimizer_type = "Adam"  # 优化器类型: "SGD", "Adam", "AdamW", "RMSprop", "Adagrad"
 # SGD 参数（随机梯度下降）
 momentum = 0.9  # 动量因子
 weight_decay = 1e-4  # 权重衰减（L2正则化）
@@ -35,7 +35,7 @@ adam_beta2 = 0.999  # Adam的beta2参数
 adam_eps = 1e-8  # Adam的epsilon参数
 
 ################################# 学习率调度器参数 ##################################
-use_scheduler = True  # 是否使用学习率调度器
+use_scheduler = False  # 是否使用学习率调度器
 scheduler_type = "CosineAnnealingWarmRestarts"  # 调度器类型: "ReduceLROnPlateau", "StepLR", "CosineAnnealingLR", "CosineAnnealingWarmRestarts", "ExponentialLR", "MultiStepLR"
 # ReduceLROnPlateau 参数（根据验证损失自动调整）
 scheduler_patience = 100  # 验证损失不下降的等待轮数
@@ -184,7 +184,7 @@ for image_path, gt_path in zip(image_paths, gt_paths):
             test_split_rate=test_split_rate,
         )
         ############################### 每个种子重新随机初始化模型参数 ##################################
-        model = Net(
+        model = MambaHSINet(
             image_x=image_x,
             image_y=image_y,
             num_classes=num_classes,
