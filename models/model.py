@@ -9,8 +9,17 @@ from .depthwise_separable_square_conv import DepthwiseSeparableSquareConv
 
 class Net(nn.Module):
     """
-    高光谱图像分类网络
-    使用归一化 -> 通道注意力 -> 空间注意力 -> 三分支（深度可分离ASPP + 多尺度非对称深度可分离卷积 + 方形卷积） -> 单向Mamba -> 分类
+    高光谱图像分类网络（优化版本）
+    
+    架构流程：
+    归一化 -> 通道注意力 + 空间注意力 -> 三分支局部特征提取 -> 特征融合 -> 单向Mamba全局建模 -> 分类
+    
+    三分支优化配置：
+    - 分支1（方形卷积）：kernel_sizes=[3, 5]，输出48通道，提取局部细节特征
+    - 分支2（ASPP膨胀卷积）：dilations=[6, 9, 12]，输出40通道，提取多尺度上下文
+    - 分支3（条状卷积）：kernel_sizes=[7, 11, 15]，输出24通道，提取方向性结构特征
+    
+    总计：112通道融合后输入Mamba进行全局序列建模
     """
 
     def __init__(
@@ -37,41 +46,44 @@ class Net(nn.Module):
         )
 
         """
-        三分支特征提取
+        三分支特征提取（优化配置）
         """
 
-        # 分支1：深度可分离方形卷积（可配置列表，默认[3, 5, 7]）
+        # 分支1：深度可分离方形卷积（聚焦局部特征）
+        # 优化：去掉7×7，更聚焦局部细节 [3, 5]
         # 压缩层已集成在模块内部
-        branch1_out_channels = 64
+        branch1_out_channels = 48  # 局部特征：48通道
 
         self.branch1_square = DepthwiseSeparableSquareConv(
             in_channels=bands,
             out_channels=branch1_out_channels,
-            kernel_sizes=[3, 5, 7],  # 可配置列表
+            kernel_sizes=[3, 5],  # 优化：去掉7，聚焦局部
             dropout_rate=dropout_rate,
         )
 
-        # 分支2：深度可分离ASPP（不进行融合，保留所有膨胀卷积分支）
+        # 分支2：深度可分离ASPP（多尺度上下文）
+        # 优化：合理膨胀率 [6, 9, 12]，避免过度稀疏
         # 压缩层已集成在模块内部
-        branch2_out_channels = 32
+        branch2_out_channels = 40  # 多尺度上下文：40通道
         self.branch2_aspp = DepthwiseSeparableASPP(
             in_channels=bands,
             out_channels=branch2_out_channels,
-            dilations=[9, 11, 13],
+            dilations=[6, 9, 12],  # 优化：避免过度膨胀（原[9, 11, 13]）
             dropout_rate=dropout_rate,
         )
 
-        # 分支3：多尺度非对称深度可分离卷积（不进行融合，保留所有非对称卷积对）
+        # 分支3：多尺度非对称深度可分离卷积（方向性特征）
+        # 优化：更实用的尺度 [7, 11, 15]，从较小的条状卷积开始
         # 压缩层已集成在模块内部
-        branch3_out_channels = 16
+        branch3_out_channels = 24  # 方向性特征：24通道
         self.branch3_asymmetric = MultiScaleAsymmetricDepthConv(
             in_channels=bands,
             out_channels=branch3_out_channels,
-            kernel_sizes=[15, 17, 19],  # 可配置列表
+            kernel_sizes=[7, 11, 15],  # 优化：更实用的尺度（原[15, 17, 19]）
             dropout_rate=dropout_rate,
         )
 
-        # 计算融合层的输入通道数（压缩后，每个分支输出64通道）
+        # 计算融合层的输入通道数（总计：48 + 40 + 24 = 112通道）
         fusion_input_channels = (
             branch1_out_channels + branch2_out_channels + branch3_out_channels
         )
@@ -140,19 +152,19 @@ class Net(nn.Module):
         三分支特征提取
         """
         # 分支1：深度可分离方形卷积（压缩层已在模块内部）
-        x_branch1 = self.branch1_square(x_attended)  # (1, 64, H, W)
+        x_branch1 = self.branch1_square(x_attended)  # (1, 48, H, W)
 
         # 分支2：深度可分离ASPP（压缩层已在模块内部）
-        x_branch2 = self.branch2_aspp(x_attended)  # (1, 64, H, W)
+        x_branch2 = self.branch2_aspp(x_attended)  # (1, 40, H, W)
 
         # 分支3：多尺度非对称深度可分离卷积（压缩层已在模块内部）
-        x_branch3 = self.branch3_asymmetric(x_attended)  # (1, 64, H, W)
+        x_branch3 = self.branch3_asymmetric(x_attended)  # (1, 24, H, W)
 
         """
         特征融合
         """
-        # 拼接三个分支的特征（每个分支64通道，共192通道）
-        x_concat = torch.cat([x_branch1, x_branch2, x_branch3], dim=1)  # (1, 192, H, W)
+        # 拼接三个分支的特征（48 + 40 + 24 = 112通道）
+        x_concat = torch.cat([x_branch1, x_branch2, x_branch3], dim=1)  # (1, 112, H, W)
 
         # 1x1卷积融合
         x_fusion = self.fusion(x_concat)  # (1, d_model - 2, H, W)
