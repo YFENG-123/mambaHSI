@@ -1,7 +1,3 @@
-data/
-images/
-logs/
-weights/
 __pycache__/
 results/
-results*.txt
+data/Pavia.mat
