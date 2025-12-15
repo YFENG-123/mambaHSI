@@ -52,8 +52,10 @@ class MambaHSINet(nn.Module):
         # 输入拼接后的特征 (2*d_model, H, W) -> 输出 (d_model, H, W)
         self.fusion_conv = nn.Conv2d(d_model * 2, d_model, kernel_size=1, bias=True)
 
-        # 使用S6核心模块
-        self.mamba = S6Core(d_model=d_model)
+        # 优化：双向 Mamba (关键修改：必须使用双向扫描以捕获全图上下文)
+        self.mamba_fwd = S6Core(d_model=d_model)
+        self.mamba_bwd = S6Core(d_model=d_model)
+        
         self.mamba_norm = nn.LayerNorm(d_model)
         self.mamba_dropout = nn.Dropout(dropout_rate)
 
@@ -100,15 +102,27 @@ class MambaHSINet(nn.Module):
         x_fused = self.fusion_conv(x_cat_conv)  # (1, d_model, H, W)
         x_fused = x_fused.squeeze(0).permute(1, 2, 0)  # (H, W, d_model)
 
-        # 5. Mamba处理 (添加残差连接)
+        # 5. Mamba处理 (双向 + Pre-Norm Residual)
         # Reshape为序列: (H, W, d_model) -> (1, H*W, d_model)
         x_seq = x_fused.reshape(-1, self.d_model)  # (H*W, d_model)
         x_seq = x_seq.unsqueeze(0)  # (1, H*W, d_model)
 
-        # Pre-Norm Residual Block
+        # 移除显式位置编码，依赖Mamba自身的隐式位置建模能力
+
+        # Pre-Norm Residual Block (这是最稳定的深层结构)
         residual = x_seq
         x_norm = self.mamba_norm(x_seq)
-        x_mamba = self.mamba(x_norm)  # (1, H*W, d_model)
+
+        # Bidirectional Mamba
+        # 前向流
+        x_fwd = self.mamba_fwd(x_norm)
+        
+        # 后向流 (翻转输入 -> 处理 -> 翻转输出)
+        x_bwd = self.mamba_bwd(x_norm.flip(dims=[1])).flip(dims=[1])
+        
+        # 融合: 相加
+        x_mamba = x_fwd + x_bwd
+
         x_mamba = self.mamba_dropout(x_mamba)
         x_mamba = x_mamba + residual
 

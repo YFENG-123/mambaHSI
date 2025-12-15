@@ -22,7 +22,7 @@ program_start_time = time.time()
 
 ################################# 设置超参数 #################################
 num_epochs = 1000  # 训练轮数
-learning_rate = 5e-3
+learning_rate = 5e-3  # 适配 Pre-Norm Residual 结构
 dropout_rate = 0.4
 ################################# 优化器参数 ##################################
 optimizer_type = "Adam"  # 优化器类型: "SGD", "Adam", "AdamW", "RMSprop", "Adagrad"
@@ -67,31 +67,31 @@ seeds = [
     80,
     443,
     445,
-    #554,
-    #3306,
-    #5900,
-    #8080,
-    #25565,
+    554,
+    3306,
+    5900,
+    8080,
+    25565,
 ]
 image_paths = [
-    # "data/HuaiLai.mat",
-    # "data/Botswana.mat",
+    #"data/HuaiLai.mat",
+    "data/Botswana.mat",
     "data/Indian_pines.mat",
-    # "data/KSC.mat",
-    # "data/Pavia.mat",
-    # "data/PaviaU.mat",
-    # "data/Salinas.mat",
-    # "data/SalinasA.mat",
+    "data/KSC.mat",
+    "data/Pavia.mat",
+    "data/PaviaU.mat",
+    "data/Salinas.mat",
+    "data/SalinasA.mat",
 ]
 gt_paths = [
-    # "data/HuaiLai.mat",
-    # "data/Botswana_gt.mat",
+    #"data/HuaiLai_gt.mat",
+    "data/Botswana_gt.mat",
     "data/Indian_pines_gt.mat",
-    # "data/KSC_gt.mat",
-    # "data/Pavia_gt.mat",
-    # "data/PaviaU_gt.mat",
-    # "data/Salinas_gt.mat",
-    # "data/SalinasA_gt.mat",
+    "data/KSC_gt.mat",
+    "data/Pavia_gt.mat",
+    "data/PaviaU_gt.mat",
+    "data/Salinas_gt.mat",
+    "data/SalinasA_gt.mat",
 ]
 val_split_rate = 0.45
 test_split_rate = 0.45

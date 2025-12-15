@@ -11,12 +11,14 @@ class SpectralBranchModule(nn.Module):
         super().__init__()
         # 输入 (..., bands) -> 输出 (..., d_model)
         self.linear = nn.Linear(in_channels, out_channels)
+        self.norm = nn.LayerNorm(out_channels)  # 添加归一化
         self.act = nn.GELU()
         self.dropout = nn.Dropout(dropout_rate)
 
     def forward(self, x):
         # x shape: (H, W, bands) or (B, H, W, bands)
         x = self.linear(x)
+        x = self.norm(x)  # 归一化
         x = self.act(x)
         x = self.dropout(x)
         return x
