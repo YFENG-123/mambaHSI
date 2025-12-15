@@ -6,6 +6,7 @@ import scipy.io as sio
 import matplotlib.pyplot as plt
 
 import torch
+import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
 
 
@@ -19,6 +20,62 @@ def set_seed(seed):
     torch.backends.cudnn.benchmark = False
     # 设置环境变量以确保完全确定性
     os.environ["PYTHONHASHSEED"] = str(seed)
+
+
+class FocalLoss(nn.Module):
+    """
+    Focal Loss用于解决类别不平衡问题
+    通过降低易分类样本的权重，使模型更关注难分类样本
+    
+    Focal Loss = alpha * (1 - pt)^gamma * CE_loss
+    其中 pt 是模型对真实类别的预测概率
+    
+    Args:
+        alpha: 平衡因子，可以是标量或每个类别的权重张量，默认为1.0
+        gamma: 聚焦参数，控制难易样本的权重，gamma越大，难样本权重越高，默认为2.0
+        reduction: 损失归约方式，'mean'、'sum'或'none'，默认为'mean'
+    """
+    
+    def __init__(self, alpha=1.0, gamma=2.0, reduction='mean'):
+        super(FocalLoss, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+    
+    def forward(self, inputs, targets):
+        """
+        Args:
+            inputs: 模型输出logits (N, num_classes)
+            targets: 真实标签 (N,)，值为[0, num_classes-1]
+        Returns:
+            focal loss值
+        """
+        # 计算交叉熵损失（不归约）
+        ce_loss = nn.functional.cross_entropy(inputs, targets, reduction='none')
+        
+        # 计算预测概率 pt = exp(-ce_loss)
+        pt = torch.exp(-ce_loss)
+        
+        # 如果alpha是张量，需要根据targets索引对应的alpha值
+        if isinstance(self.alpha, torch.Tensor):
+            # 确保alpha张量在正确的设备上
+            if self.alpha.device != targets.device:
+                alpha_t = self.alpha.to(targets.device)[targets]
+            else:
+                alpha_t = self.alpha[targets]
+        else:
+            alpha_t = self.alpha
+        
+        # 计算focal loss
+        focal_loss = alpha_t * (1 - pt) ** self.gamma * ce_loss
+        
+        # 根据reduction方式归约
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        elif self.reduction == 'sum':
+            return focal_loss.sum()
+        else:
+            return focal_loss
 
 
 def load_data(
@@ -194,6 +251,8 @@ def step(model, loader, criterion, optimizer, mode):
         if mode == "train":  # 训练模式下，计算梯度并更新模型参数
             optimizer.zero_grad()
             loss.backward()
+            # 梯度裁剪：防止梯度爆炸，提高训练稳定性
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
         # 计算准确率
