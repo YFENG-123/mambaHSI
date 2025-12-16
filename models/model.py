@@ -1,13 +1,15 @@
 import torch
 import torch.nn as nn
-from .s6_core import S6Core
 from .spatial_branch import SpatialBranchModule
 from .spectral_branch import SpectralBranchModule
+from .bidirectional_mamba import BidirectionalMamba
+from .class_aware_enhancement import ClassAwareFeatureEnhancement
+from .classifier import Classifier
 
 
 class MambaHSINet(nn.Module):
     """
-    高光谱图像分类网络（双分支架构 + 多尺度空间特征）
+    高光谱图像分类网络（双分支架构 + 多尺度空间特征 + 类别感知增强）
 
     架构流程：
     1. 归一化
@@ -18,8 +20,11 @@ class MambaHSINet(nn.Module):
             - 拼接 -> 1x1 卷积压缩
     3. 拼接两个分支特征
     4. 1x1卷积融合
-    5. Mamba处理 (S6Core)
-    6. LayerNorm -> Dropout -> 分类器
+    5. Mamba处理 (BidirectionalMamba)
+    6. 类别感知的特征增强 (ClassAwareFeatureEnhancement)
+       - 使用类别原型增强特征表示
+       - 特别关注少数类别的特征增强
+    7. LayerNorm -> Dropout -> 分类器
     """
 
     def __init__(
@@ -52,21 +57,28 @@ class MambaHSINet(nn.Module):
         # 输入拼接后的特征 (2*d_model, H, W) -> 输出 (d_model, H, W)
         self.fusion_conv = nn.Conv2d(d_model * 2, d_model, kernel_size=1, bias=True)
 
-        # 优化：双向 Mamba (关键修改：必须使用双向扫描以捕获全图上下文)
-        self.mamba_fwd = S6Core(d_model=d_model)
-        self.mamba_bwd = S6Core(d_model=d_model)
-        
-        self.mamba_norm = nn.LayerNorm(d_model)
-        self.mamba_dropout = nn.Dropout(dropout_rate)
+        # 双向 Mamba模块
+        self.bidirectional_mamba = BidirectionalMamba(
+            d_model=d_model,
+            dropout_rate=dropout_rate,
+        )
 
-        # 分类器
-        classifier_hidden = 64  # 隐藏层维度
-        self.classifier = nn.Sequential(
-            nn.Linear(d_model, classifier_hidden),
-            nn.LayerNorm(classifier_hidden),
-            nn.GELU(),
-            nn.Dropout(dropout_rate),
-            nn.Linear(classifier_hidden, num_classes),
+        # 类别感知的特征增强模块
+        # 在双向Mamba后添加，使用类别原型增强特征表示
+        self.class_aware_enhancement = ClassAwareFeatureEnhancement(
+            d_model=d_model,
+            num_classes=num_classes,
+            dropout_rate=dropout_rate,
+            temperature=0.1,  # 温度参数，控制注意力分布的锐度
+            enhancement_scale=0.5,  # 增强强度，控制原型增强的权重
+        )
+
+        # 分类器模块
+        self.classifier = Classifier(
+            d_model=d_model,
+            num_classes=num_classes,
+            classifier_hidden=64,
+            dropout_rate=dropout_rate,
         )
 
     def forward(self, x):
@@ -98,8 +110,8 @@ class MambaHSINet(nn.Module):
 
         # 4. 1x1卷积融合
         # 转换维度: (H, W, 2*d_model) -> (1, 2*d_model, H, W)
-        x_cat_conv = x_cat.permute(2, 0, 1).unsqueeze(0)
-        x_fused = self.fusion_conv(x_cat_conv)  # (1, d_model, H, W)
+        x_fused = x_cat.permute(2, 0, 1).unsqueeze(0)
+        x_fused = self.fusion_conv(x_fused)  # (1, d_model, H, W)
         x_fused = x_fused.squeeze(0).permute(1, 2, 0)  # (H, W, d_model)
 
         # 5. Mamba处理 (双向 + Pre-Norm Residual)
@@ -109,27 +121,16 @@ class MambaHSINet(nn.Module):
 
         # 移除显式位置编码，依赖Mamba自身的隐式位置建模能力
 
-        # Pre-Norm Residual Block (这是最稳定的深层结构)
-        residual = x_seq
-        x_norm = self.mamba_norm(x_seq)
-
-        # Bidirectional Mamba
-        # 前向流
-        x_fwd = self.mamba_fwd(x_norm)
-        
-        # 后向流 (翻转输入 -> 处理 -> 翻转输出)
-        x_bwd = self.mamba_bwd(x_norm.flip(dims=[1])).flip(dims=[1])
-        
-        # 融合: 相加
-        x_mamba = x_fwd + x_bwd
-
-        x_mamba = self.mamba_dropout(x_mamba)
-        x_mamba = x_mamba + residual
-
+        # 双向Mamba处理
+        x_mamba = self.bidirectional_mamba(x_seq)  # (1, H*W, d_model)
         x_mamba = x_mamba.squeeze(0)  # (H*W, d_model)
 
+        # 类别感知的特征增强
+        # 使用类别原型来增强特征表示，特别关注少数类别
+        x_enhanced = self.class_aware_enhancement(x_mamba)  # (H*W, d_model)
+
         # 6. 分类
-        output = self.classifier(x_mamba)  # (H*W, num_classes)
+        output = self.classifier(x_enhanced)  # (H*W, num_classes)
         output = output.reshape(h, w, -1)  # (H, W, num_classes)
 
         return output
