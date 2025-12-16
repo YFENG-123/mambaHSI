@@ -22,7 +22,7 @@ program_start_time = time.time()
 
 ################################# 设置超参数 #################################
 num_epochs = 1000  # 训练轮数
-learning_rate = 1e-2  # 适配 Pre-Norm Residual 结构
+learning_rate = 2e-2  # 适配 Pre-Norm Residual 结构
 dropout_rate = 0.3
 ################################# 优化器参数 ##################################
 optimizer_type = "Adam"  # 优化器类型: "SGD", "Adam", "AdamW", "RMSprop", "Adagrad"

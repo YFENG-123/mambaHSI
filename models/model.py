@@ -42,8 +42,9 @@ class MambaHSINet(nn.Module):
         self.image_y = image_y
         self.d_model = d_model
 
-        # 预处理层：归一化
-        self.preprocess = nn.LayerNorm(bands)
+        # 预处理层：归一化（使用GroupNorm）
+        # GroupNorm需要(B, C, H, W)格式，所以需要在forward中转换维度
+        self.preprocess = nn.GroupNorm(1, bands)  # num_groups=1等价于LayerNorm
 
         # 光谱分支：增强的线性映射 (Linear + GELU + Dropout)
         # 输入 (H, W, bands) -> 输出 (H, W, d_model)
@@ -90,8 +91,13 @@ class MambaHSINet(nn.Module):
         """
         h, w, _ = x.shape
 
-        # 1. 预处理：归一化
-        x_norm = self.preprocess(x)  # (H, W, bands)
+        # 1. 预处理：归一化（使用GroupNorm）
+        # GroupNorm需要(B, C, H, W)格式，所以需要转换维度
+        # (H, W, bands) -> (1, bands, H, W)
+        x_for_norm = x.permute(2, 0, 1).unsqueeze(0)  # (1, bands, H, W)
+        x_norm_tensor = self.preprocess(x_for_norm)  # (1, bands, H, W)
+        # 转换回 (H, W, bands)
+        x_norm = x_norm_tensor.squeeze(0).permute(1, 2, 0)  # (H, W, bands)
 
         # 2. 双分支处理
 

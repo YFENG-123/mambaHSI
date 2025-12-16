@@ -11,7 +11,7 @@ class SpatialBranchModule(nn.Module):
     - 5x5 卷积
     - 7x7 卷积
     
-    将三个分支的特征拼接后，通过1x1卷积进行压缩，并加入LayerNorm和Dropout防止过拟合。
+    使用可学习的加权融合将三个分支的特征融合，并加入LayerNorm和Dropout防止过拟合。
     """
     def __init__(self, in_channels, out_channels, dropout_rate=0.5):
         super().__init__()
@@ -19,8 +19,8 @@ class SpatialBranchModule(nn.Module):
         self.conv5 = nn.Conv2d(in_channels, out_channels, kernel_size=5, padding=2)
         self.conv7 = nn.Conv2d(in_channels, out_channels, kernel_size=7, padding=3)
         
-        # 融合层：将3个分支的结果拼接后压缩
-        self.fusion = nn.Conv2d(out_channels * 3, out_channels, kernel_size=1)
+        # 可学习的融合权重（三个分支的权重）
+        self.fusion_weights = nn.Parameter(torch.ones(3) / 3)  # 初始化为均匀权重
 
         # 更通用的LayerNorm做法是 permute 后 norm 再 permute 回来，或者使用 BatchNorm2d / GroupNorm
         # 这里为了稳健性，使用 GroupNorm 或者 BatchNorm2d 可能更好，但题目语境倾向于 transformer 风格的 LayerNorm
@@ -35,11 +35,11 @@ class SpatialBranchModule(nn.Module):
         x5 = self.conv5(x)
         x7 = self.conv7(x)
         
-        # 拼接 (B, 3*C_out, H, W)
-        x_cat = torch.cat([x3, x5, x7], dim=1)
+        # 使用softmax归一化权重，确保权重和为1
+        weights = torch.softmax(self.fusion_weights, dim=0)
         
-        # 融合
-        out = self.fusion(x_cat)
+        # 可学习的加权融合
+        out = weights[0] * x3 + weights[1] * x5 + weights[2] * x7
         
         # 归一化 + 激活 + Dropout
         out = self.norm_layer(out)
