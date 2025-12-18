@@ -42,12 +42,14 @@ class MambaHSINet(nn.Module):
         self.spatial_branch = SpatialBranchModule(bands, d_model, dropout_rate)
 
         # 3. 融合模块：Simple Fusion
-        self.fusion_module = FusionModule(in_channels=d_model * 2, out_channels=d_model, dropout_rate=dropout_rate)
+        self.fusion_module = FusionModule(
+            in_channels=d_model * 2, out_channels=d_model, dropout_rate=dropout_rate
+        )
 
         # 4. Mamba Global Block
         self.mamba_fwd = S6Core(d_model=d_model)
         self.mamba_bwd = S6Core(d_model=d_model)
-        
+
         self.mamba_norm = nn.LayerNorm(d_model)
         self.mamba_dropout = nn.Dropout(dropout_rate)
 
@@ -68,7 +70,7 @@ class MambaHSINet(nn.Module):
 
         # 2. 双分支特征提取
         x_spec = self.spectral_branch(x_norm)
-        
+
         x_spat = x_norm.permute(2, 0, 1).unsqueeze(0)
         x_spat = self.spatial_branch(x_spat)
         x_spat = x_spat.squeeze(0).permute(1, 2, 0)
@@ -78,19 +80,19 @@ class MambaHSINet(nn.Module):
         x_fused = self.fusion_module(x_cat)
 
         # 4. Mamba 全局建模
-        x_seq = x_fused.reshape(-1, self.d_model).unsqueeze(0) # (1, H*W, d)
-        
+        x_seq = x_fused.reshape(-1, self.d_model).unsqueeze(0)  # (1, H*W, d)
+
         residual = x_seq
         x_norm = self.mamba_norm(x_seq)
 
         x_fwd = self.mamba_fwd(x_norm)
         x_bwd = self.mamba_bwd(x_norm.flip(dims=[1])).flip(dims=[1])
-        x_mamba = x_fwd + x_bwd 
-        
+        x_mamba = x_fwd + x_bwd
+
         x_mamba = self.mamba_dropout(x_mamba)
         x_mamba = x_mamba + residual
 
-        x_mamba = x_mamba.squeeze(0) # (H*W, d)
+        x_mamba = x_mamba.squeeze(0)  # (H*W, d)
 
         # 5. 分类
         output = self.classifier(x_mamba)

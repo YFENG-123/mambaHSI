@@ -4,18 +4,25 @@ from .s6_core import S6Core
 
 class BidirectionalMamba(nn.Module):
     """
-    双向Mamba模块：纯净版 (Pure SSM) - V4.4
-    
+    双向Mamba模块：Pure Bidirectional SSM (V4.3)
+
     改进：
-    在 V4.3 (Pure SSM) 的基础上，进一步精简。
-    移除 `Residual` 连接。
-    
+    响应用户反馈，**再次移除 Local Conv**。
+
     原因：
-    - Mamba 内部是 `x + residual`，而 MambaHSINet 主干中调用 Mamba 时也是 `x = mamba(x) + x`。
-    - 这导致了双重残差连接，不仅增加了梯度路径的复杂性，还可能导致信号强度在深层被过度放大，引起训练不稳定或收敛震荡。
-    - 鉴于我们追求“精简模型”，去除模块内部冗余的残差连接，让主干网络的残差机制全权负责梯度流，有助于更平滑的训练。
+    用户指出：“双分支中空间分支就已经进行过卷积，提取空间信息”。
+    这是一个非常精准的架构洞察。
+    1. 前端的 Spatial Branch (V3.9 SK-Fusion) 已经使用了强大的多尺度卷积来提取丰富的局部空间特征。
+    2. Fusion 模块已经将这些空间特征与光谱特征融合。
+    3. 因此，Mamba 模块的任务应该是专注于利用 SSM 的长序列建模能力来捕获 **全局上下文 (Global Context)** 和 **长距离依赖**。
+    4. 在此阶段再次添加 Local Conv 属于功能冗余，不仅增加参数，还可能因为过度平滑而模糊了 Spatial Branch 辛辛苦苦提取的精细特征。
+
+    回归纯净的 SSM 结构，让各模块各司其职：
+    - Spatial Branch -> Local Spatial Features
+    - Spectral Branch -> Local Spectral Features
+    - Mamba -> Global Context Integration
     """
-    
+
     def __init__(
         self,
         d_model=64,
@@ -23,32 +30,40 @@ class BidirectionalMamba(nn.Module):
     ):
         super().__init__()
         self.d_model = d_model
-        
+
+        # 移除 Local Conv
+        # self.local_conv = ...
+
         # Global Context: Bidirectional SSM
         self.mamba_fwd = S6Core(d_model=d_model)
         self.mamba_bwd = S6Core(d_model=d_model)
-        
+
         # Norm & Dropout
         self.norm = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(dropout_rate)
-    
+
     def forward(self, x):
         """
         Args:
             x: 输入特征 (batch, seq_len, d_model)
         """
+        # Residual connection
+        residual = x
+
         # 1. 归一化
-        x_norm = self.norm(x)
-        
-        # 2. Bidirectional SSM
-        x_fwd = self.mamba_fwd(x_norm)
-        x_bwd = self.mamba_bwd(x_norm.flip(dims=[1])).flip(dims=[1])
+        x = self.norm(x)
+
+        # 2. Local Conv (Removed)
+        # x_t = x.transpose(1, 2)
+        # x_t = self.local_conv(x_t)
+        # x = x_t.transpose(1, 2)
+
+        # 3. Bidirectional SSM
+        x_fwd = self.mamba_fwd(x)
+        x_bwd = self.mamba_bwd(x.flip(dims=[1])).flip(dims=[1])
         x_ssm = x_fwd + x_bwd
-        
-        # 3. Dropout
-        out = self.dropout(x_ssm)
-        
-        # 移除内部 Residual，依赖外部主干网络的 Residual
-        # out = out + x 
-        
+
+        # 4. Dropout & Residual
+        out = self.dropout(x_ssm) + residual
+
         return out

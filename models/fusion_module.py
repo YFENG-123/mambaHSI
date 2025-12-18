@@ -37,7 +37,7 @@ class FusionModule(nn.Module):
         
         self.act = nn.GELU()
         self.dropout = nn.Dropout(dropout_rate)
-    
+            
     def forward(self, x):
         # x: (H, W, in_channels)
         x_in = x.permute(2, 0, 1).unsqueeze(0)

@@ -76,13 +76,13 @@ seeds = [
     # 25565,
 ]
 image_paths = [
-    #"data/HuaiLai.mat",
-    #"data/Botswana.mat",
+    # "data/HuaiLai.mat",
+    # "data/Botswana.mat",
     "data/Indian_pines.mat",
-    #"data/KSC.mat",
-    #"data/Pavia.mat",
-    #"data/PaviaU.mat",
-    #"data/Salinas.mat",
+    # "data/KSC.mat",
+    # "data/Pavia.mat",
+    # "data/PaviaU.mat",
+    # "data/Salinas.mat",
     # "data/SalinasA.mat",
 ]
 gt_paths = [
