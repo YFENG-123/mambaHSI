@@ -115,6 +115,8 @@ def load_data(
     train_label_index_list = []
     test_label_index_list = []
     val_label_index_list = []
+    # 记录训练集中每个类别的样本数（包含背景类0）
+    class_counts = np.zeros(max_label + 1, dtype=np.int64)
     for i in range(1, max_label + 1):
         random.shuffle(label_index_list[i])
         test_split_index = int(len(label_index_list[i]) * test_split_rate)
@@ -129,6 +131,8 @@ def load_data(
             label_index_list[i][test_split_index:val_split_index]
         )
         train_label_index_list.extend(label_index_list[i][val_split_index:])
+        # 记录该类别在训练集中的样本数量
+        class_counts[i] = len(label_index_list[i][val_split_index:])
 
     # 生成掩码，并生成数据集
     train_mask = np.zeros(gt_flatten.shape)
@@ -185,6 +189,23 @@ def load_data(
         else None,
     )
 
+    # 使用在分割阶段计算得到的 class_counts 来生成类别权重（用于 CrossEntropyLoss 的 weight）
+    eps = 1e-8
+    class_weights_np = np.zeros_like(class_counts, dtype=np.float32)
+    for i in range(len(class_counts)):
+        if class_counts[i] > 0:
+            class_weights_np[i] = 1.0 / (class_counts[i] + eps)
+        else:
+            class_weights_np[i] = 0.0
+
+    # 将权重归一化为和为1以保持数值稳定性（可选，但通常有益）
+    if class_weights_np.sum() > 0:
+        class_weights_np = class_weights_np / class_weights_np.sum()
+
+    class_weights = torch.from_numpy(class_weights_np).float()
+
+    # 返回训练集类别权重（用于损失函数/采样器的构造）
+
     # 注意：Indian Pines 等数据集的标签通常是 0 表示背景，1~max_label 表示类别，
     # 因此真实的类别总数应为 max_label + 1（包含背景类 0）。
     # CrossEntropyLoss 要求 target ∈ [0, num_classes-1]，如果 num_classes == max_label，
@@ -198,6 +219,7 @@ def load_data(
         image_y,
         channel,
         max_label + 1,
+        class_weights,
         image,
         gt,
     )

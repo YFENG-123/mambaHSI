@@ -37,7 +37,7 @@ adam_eps = 1e-8  # Adam的epsilon参数
 
 ################################# 损失函数参数 ##################################
 use_focal_loss = (
-    False  # 是否使用Focal Loss（True使用Focal Loss，False使用CrossEntropyLoss）
+    True  # 是否使用Focal Loss（True使用Focal Loss，False使用CrossEntropyLoss）
 )
 focal_alpha = 1.0  # Focal Loss的alpha参数（平衡因子，可以是标量或每个类别的权重）
 focal_gamma = 2.0  # Focal Loss的gamma参数（聚焦参数，控制难易样本的权重）
@@ -48,7 +48,7 @@ scheduler_type = "ReduceLROnPlateau"  # 调度器类型: "ReduceLROnPlateau", "S
 # ReduceLROnPlateau 参数（根据验证损失自动调整）
 scheduler_patience = 70  # 验证损失不下降的等待轮数
 scheduler_factor = 0.80  # 学习率衰减因子
-scheduler_min_lr = 1e-5  # 最小学习率
+scheduler_min_lr = 5e-5  # 最小学习率
 # StepLR 参数（每隔固定轮数降低学习率）
 step_size = 100  # 每多少轮降低一次学习率
 gamma = 0.5  # 学习率衰减因子
@@ -211,6 +211,7 @@ for image_path, gt_path in zip(image_paths, gt_paths):
             image_y,
             bands,
             num_classes,
+            class_weights,
             image,
             gt,
         ) = load_data(
@@ -229,10 +230,19 @@ for image_path, gt_path in zip(image_paths, gt_paths):
         ).to("cuda")
         ################################# 创建损失函数 ##################################
         if use_focal_loss:
-            criterion = FocalLoss(alpha=focal_alpha, gamma=focal_gamma)
-            print(f"使用Focal Loss: alpha={focal_alpha}, gamma={focal_gamma}")
+            # 使用每类权重作为Focal Loss的alpha，能让损失函数更关注少数类
+            try:
+                criterion = FocalLoss(alpha=class_weights.to('cuda') if torch.cuda.is_available() else class_weights, gamma=focal_gamma)
+            except Exception:
+                criterion = FocalLoss(alpha=focal_alpha, gamma=focal_gamma)
+            print(f"使用Focal Loss（alpha=class_weights） gamma={focal_gamma}")
         else:
-            criterion = nn.CrossEntropyLoss()
+            # 使用训练集中统计得到的类别权重，减轻少数类样本稀疏带来的影响
+            try:
+                criterion = nn.CrossEntropyLoss(weight=class_weights.to('cuda'))
+            except Exception:
+                # 如果无法将权重放到CUDA（例如没有GPU），则使用CPU权重
+                criterion = nn.CrossEntropyLoss(weight=class_weights)
             print("使用CrossEntropyLoss")
         ################################# 创建优化器 ##################################
         if optimizer_type == "SGD":
