@@ -14,6 +14,7 @@ from util import (
     set_seed,
     write_results_to_txt,
     FocalLoss,
+    init_results_file,
 )
 from log import Log
 
@@ -24,6 +25,7 @@ program_start_time = time.time()
 num_epochs = 1000  # 训练轮数
 learning_rate = 1e-2  # 适配 Pre-Norm Residual 结构
 dropout_rate = 0.3
+
 ################################# 优化器参数 ##################################
 optimizer_type = "Adam"  # 优化器类型: "SGD", "Adam", "AdamW", "RMSprop", "Adagrad"
 # SGD 参数（随机梯度下降）
@@ -43,7 +45,7 @@ focal_alpha = 1.0  # Focal Loss的alpha参数（平衡因子，可以是标量�
 focal_gamma = 2.0  # Focal Loss的gamma参数（聚焦参数，控制难易样本的权重）
 
 ################################# 学习率调度器参数 ##################################
-use_scheduler = True  # 是否使用学习率调度器（已启用，有助于收敛和防止过拟合）
+use_scheduler = False  # 是否使用学习率调度器（已启用，有助于收敛和防止过拟合）
 scheduler_type = "ReduceLROnPlateau"  # 调度器类型: "ReduceLROnPlateau", "StepLR", "CosineAnnealingLR", "CosineAnnealingWarmRestarts", "ExponentialLR", "MultiStepLR"
 # ReduceLROnPlateau 参数（根据验证损失自动调整）
 scheduler_patience = 70  # 验证损失不下降的等待轮数
@@ -124,64 +126,38 @@ os.makedirs(images_base_dir, exist_ok=True)
 print(f"图像文件目录: {images_base_dir}")
 
 results_txt_path = os.path.join(results_base_dir, f"results_{timestamp}.txt")
-with open(results_txt_path, "w", encoding="utf-8") as results_file:
-    results_file.write("=" * 120 + "\n")
-    results_file.write(f"实验结果记录 - {timestamp}\n")
-    results_file.write("=" * 120 + "\n")
-    results_file.write("超参数设置:\n")
-    results_file.write(f"  训练轮数: {num_epochs}\n")
-    results_file.write(f"  学习率: {learning_rate}\n")
-    results_file.write(f"  Dropout率: {dropout_rate}\n")
-    results_file.write(f"  优化器类型: {optimizer_type}\n")
-    # 写入优化器参数
-    if optimizer_type == "SGD":
-        results_file.write(f"    动量: {momentum}\n")
-        results_file.write(f"    权重衰减: {weight_decay}\n")
-        results_file.write(f"    Nesterov: {nesterov}\n")
-    elif optimizer_type in ["Adam", "AdamW"]:
-        results_file.write(f"    Beta1: {adam_beta1}\n")
-        results_file.write(f"    Beta2: {adam_beta2}\n")
-        results_file.write(f"    Epsilon: {adam_eps}\n")
-        results_file.write(f"    权重衰减: {weight_decay}\n")
-    elif optimizer_type == "RMSprop":
-        results_file.write(f"    动量: {momentum}\n")
-        results_file.write(f"    权重衰减: {weight_decay}\n")
-    elif optimizer_type == "Adagrad":
-        results_file.write(f"    权重衰减: {weight_decay}\n")
-        results_file.write(f"    Epsilon: {adam_eps}\n")
-    results_file.write(f"  验证集比例: {val_split_rate}\n")
-    results_file.write(f"  测试集比例: {test_split_rate}\n")
-    # 写入损失函数参数
-    if use_focal_loss:
-        results_file.write("  损失函数: Focal Loss\n")
-        results_file.write(f"    Alpha: {focal_alpha}\n")
-        results_file.write(f"    Gamma: {focal_gamma}\n")
-    else:
-        results_file.write("  损失函数: CrossEntropyLoss\n")
-    results_file.write(f"  随机种子: {seeds}\n")
-    # 写入学习率调度器参数
-    if use_scheduler:
-        results_file.write(f"  学习率调度器: {scheduler_type} (PyTorch自带)\n")
-        if scheduler_type == "ReduceLROnPlateau":
-            results_file.write(f"    耐心值: {scheduler_patience}\n")
-            results_file.write(f"    衰减因子: {scheduler_factor}\n")
-            results_file.write(f"    最小学习率: {scheduler_min_lr}\n")
-        elif scheduler_type == "StepLR":
-            results_file.write(f"    步长: {step_size}\n")
-            results_file.write(f"    衰减因子: {gamma}\n")
-        elif scheduler_type == "CosineAnnealingLR":
-            results_file.write(f"    周期: {T_max}\n")
-            results_file.write(f"    最小学习率: {scheduler_min_lr}\n")
-        elif scheduler_type == "CosineAnnealingWarmRestarts":
-            results_file.write(f"    初始周期: {T_0}\n")
-            results_file.write(f"    周期倍数: {T_mult}\n")
-            results_file.write(f"    最小学习率: {scheduler_min_lr}\n")
-        elif scheduler_type == "ExponentialLR":
-            results_file.write(f"    衰减因子: {exp_gamma}\n")
-        elif scheduler_type == "MultiStepLR":
-            results_file.write(f"    里程碑: {milestones}\n")
-            results_file.write(f"    衰减因子: {gamma}\n")
-    results_file.write("=" * 120 + "\n\n")
+config_for_results = {
+    "timestamp": timestamp,
+    "num_epochs": num_epochs,
+    "learning_rate": learning_rate,
+    "dropout_rate": dropout_rate,
+    "optimizer_type": optimizer_type,
+    "momentum": momentum,
+    "weight_decay": weight_decay,
+    "nesterov": nesterov,
+    "adam_beta1": adam_beta1,
+    "adam_beta2": adam_beta2,
+    "adam_eps": adam_eps,
+    "val_split_rate": val_split_rate,
+    "test_split_rate": test_split_rate,
+    "use_focal_loss": use_focal_loss,
+    "focal_alpha": focal_alpha,
+    "focal_gamma": focal_gamma,
+    "seeds": seeds,
+    "use_scheduler": use_scheduler,
+    "scheduler_type": scheduler_type,
+    "scheduler_patience": scheduler_patience,
+    "scheduler_factor": scheduler_factor,
+    "scheduler_min_lr": scheduler_min_lr,
+    "step_size": step_size,
+    "gamma": gamma,
+    "T_max": T_max,
+    "T_0": T_0,
+    "T_mult": T_mult,
+    "exp_gamma": exp_gamma,
+    "milestones": milestones,
+}
+init_results_file(results_txt_path, config_for_results)
 print(f"结果记录文件: {results_txt_path}")
 
 log_base_dir = os.path.join(results_base_dir, "logs")
@@ -232,14 +208,19 @@ for image_path, gt_path in zip(image_paths, gt_paths):
         if use_focal_loss:
             # 使用每类权重作为Focal Loss的alpha，能让损失函数更关注少数类
             try:
-                criterion = FocalLoss(alpha=class_weights.to('cuda') if torch.cuda.is_available() else class_weights, gamma=focal_gamma)
+                criterion = FocalLoss(
+                    alpha=class_weights.to("cuda")
+                    if torch.cuda.is_available()
+                    else class_weights,
+                    gamma=focal_gamma,
+                )
             except Exception:
                 criterion = FocalLoss(alpha=focal_alpha, gamma=focal_gamma)
             print(f"使用Focal Loss（alpha=class_weights） gamma={focal_gamma}")
         else:
             # 使用训练集中统计得到的类别权重，减轻少数类样本稀疏带来的影响
             try:
-                criterion = nn.CrossEntropyLoss(weight=class_weights.to('cuda'))
+                criterion = nn.CrossEntropyLoss(weight=class_weights.to("cuda"))
             except Exception:
                 # 如果无法将权重放到CUDA（例如没有GPU），则使用CPU权重
                 criterion = nn.CrossEntropyLoss(weight=class_weights)

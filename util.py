@@ -578,6 +578,80 @@ def generate_picture(  # 生成测试集结果可视化图片
     plt.close()
 
 
+def init_results_file(results_txt_path, config):
+    """Initialize results txt file with experiment header.
+
+    Args:
+        results_txt_path (str): path to results txt file
+        config (dict): configuration dictionary containing keys used below
+    """
+    with open(results_txt_path, "w", encoding="utf-8") as results_file:
+        results_file.write("=" * 120 + "\n")
+        results_file.write(f"实验结果记录 - {config.get('timestamp', '')}\n")
+        results_file.write("=" * 120 + "\n")
+        results_file.write("超参数设置:\n")
+        results_file.write(f"  训练轮数: {config.get('num_epochs')}\n")
+        results_file.write(f"  学习率: {config.get('learning_rate')}\n")
+        results_file.write(f"  Dropout率: {config.get('dropout_rate')}\n")
+        results_file.write(f"  优化器类型: {config.get('optimizer_type')}\n")
+        opt = config.get("optimizer_type")
+        if opt == "SGD":
+            results_file.write(f"    动量: {config.get('momentum')}\n")
+            results_file.write(f"    权重衰减: {config.get('weight_decay')}\n")
+            results_file.write(f"    Nesterov: {config.get('nesterov')}\n")
+        elif opt in ["Adam", "AdamW"]:
+            results_file.write(f"    Beta1: {config.get('adam_beta1')}\n")
+            results_file.write(f"    Beta2: {config.get('adam_beta2')}\n")
+            results_file.write(f"    Epsilon: {config.get('adam_eps')}\n")
+            results_file.write(f"    权重衰减: {config.get('weight_decay')}\n")
+        elif opt == "RMSprop":
+            results_file.write(f"    动量: {config.get('momentum')}\n")
+            results_file.write(f"    权重衰减: {config.get('weight_decay')}\n")
+        elif opt == "Adagrad":
+            results_file.write(f"    权重衰减: {config.get('weight_decay')}\n")
+            results_file.write(f"    Epsilon: {config.get('adam_eps')}\n")
+        results_file.write(f"  验证集比例: {config.get('val_split_rate')}\n")
+        results_file.write(f"  测试集比例: {config.get('test_split_rate')}\n")
+        if config.get("use_focal_loss"):
+            results_file.write("  损失函数: Focal Loss\n")
+            results_file.write(f"    Alpha: {config.get('focal_alpha')}\n")
+            results_file.write(f"    Gamma: {config.get('focal_gamma')}\n")
+        else:
+            results_file.write("  损失函数: CrossEntropyLoss\n")
+        results_file.write(f"  随机种子: {config.get('seeds')}\n")
+        if config.get("use_scheduler"):
+            results_file.write(
+                f"  学习率调度器: {config.get('scheduler_type')} (PyTorch自带)\n"
+            )
+            st = config.get("scheduler_type")
+            if st == "ReduceLROnPlateau":
+                results_file.write(f"    耐心值: {config.get('scheduler_patience')}\n")
+                results_file.write(f"    衰减因子: {config.get('scheduler_factor')}\n")
+                results_file.write(
+                    f"    最小学习率: {config.get('scheduler_min_lr')}\n"
+                )
+            elif st == "StepLR":
+                results_file.write(f"    步长: {config.get('step_size')}\n")
+                results_file.write(f"    衰减因子: {config.get('gamma')}\n")
+            elif st == "CosineAnnealingLR":
+                results_file.write(f"    周期: {config.get('T_max')}\n")
+                results_file.write(
+                    f"    最小学习率: {config.get('scheduler_min_lr')}\n"
+                )
+            elif st == "CosineAnnealingWarmRestarts":
+                results_file.write(f"    初始周期: {config.get('T_0')}\n")
+                results_file.write(f"    周期倍数: {config.get('T_mult')}\n")
+                results_file.write(
+                    f"    最小学习率: {config.get('scheduler_min_lr')}\n"
+                )
+            elif st == "ExponentialLR":
+                results_file.write(f"    衰减因子: {config.get('exp_gamma')}\n")
+            elif st == "MultiStepLR":
+                results_file.write(f"    里程碑: {config.get('milestones')}\n")
+                results_file.write(f"    衰减因子: {config.get('gamma')}\n")
+        results_file.write("=" * 120 + "\n\n")
+
+
 def write_results_to_txt(  # 将实验结果写入txt文件
     results_txt_path,
     data_name,
