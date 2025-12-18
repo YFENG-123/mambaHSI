@@ -22,7 +22,7 @@ program_start_time = time.time()
 
 ################################# 设置超参数 #################################
 num_epochs = 1000  # 训练轮数
-learning_rate = 2e-2  # 适配 Pre-Norm Residual 结构
+learning_rate = 1e-2  # 适配 Pre-Norm Residual 结构
 dropout_rate = 0.3
 ################################# 优化器参数 ##################################
 optimizer_type = "Adam"  # 优化器类型: "SGD", "Adam", "AdamW", "RMSprop", "Adagrad"
@@ -36,17 +36,19 @@ adam_beta2 = 0.999  # Adam的beta2参数
 adam_eps = 1e-8  # Adam的epsilon参数
 
 ################################# 损失函数参数 ##################################
-use_focal_loss = False  # 是否使用Focal Loss（True使用Focal Loss，False使用CrossEntropyLoss）
+use_focal_loss = (
+    False  # 是否使用Focal Loss（True使用Focal Loss，False使用CrossEntropyLoss）
+)
 focal_alpha = 1.0  # Focal Loss的alpha参数（平衡因子，可以是标量或每个类别的权重）
 focal_gamma = 2.0  # Focal Loss的gamma参数（聚焦参数，控制难易样本的权重）
 
 ################################# 学习率调度器参数 ##################################
-use_scheduler = False  # 是否使用学习率调度器（已启用，有助于收敛和防止过拟合）
+use_scheduler = True  # 是否使用学习率调度器（已启用，有助于收敛和防止过拟合）
 scheduler_type = "ReduceLROnPlateau"  # 调度器类型: "ReduceLROnPlateau", "StepLR", "CosineAnnealingLR", "CosineAnnealingWarmRestarts", "ExponentialLR", "MultiStepLR"
 # ReduceLROnPlateau 参数（根据验证损失自动调整）
-scheduler_patience = 50  # 验证损失不下降的等待轮数（降低patience，更早调整学习率）
-scheduler_factor = 0.5  # 学习率衰减因子（更激进的衰减）
-scheduler_min_lr = 1e-6  # 最小学习率（更小的最小学习率，允许更精细的调整）
+scheduler_patience = 70  # 验证损失不下降的等待轮数
+scheduler_factor = 0.80  # 学习率衰减因子
+scheduler_min_lr = 1e-5  # 最小学习率
 # StepLR 参数（每隔固定轮数降低学习率）
 step_size = 100  # 每多少轮降低一次学习率
 gamma = 0.5  # 学习率衰减因子
@@ -67,11 +69,11 @@ seeds = [
     80,
     443,
     445,
-    554,
-    3306,
-    5900,
-    8080,
-    25565,
+    # 554,
+    # 3306,
+    # 5900,
+    # 8080,
+    # 25565,
 ]
 image_paths = [
     #"data/HuaiLai.mat",
@@ -81,17 +83,17 @@ image_paths = [
     #"data/Pavia.mat",
     #"data/PaviaU.mat",
     #"data/Salinas.mat",
-    #"data/SalinasA.mat",
+    # "data/SalinasA.mat",
 ]
 gt_paths = [
-    #"data/HuaiLai_gt.mat",
-    #"data/Botswana_gt.mat",
+    # "data/HuaiLai_gt.mat",
+    # "data/Botswana_gt.mat",
     "data/Indian_pines_gt.mat",
-    #"data/KSC_gt.mat",
-    #"data/Pavia_gt.mat",
-    #"data/PaviaU_gt.mat",
-    #"data/Salinas_gt.mat",
-    #"data/SalinasA_gt.mat",
+    # "data/KSC_gt.mat",
+    # "data/Pavia_gt.mat",
+    # "data/PaviaU_gt.mat",
+    # "data/Salinas_gt.mat",
+    # "data/SalinasA_gt.mat",
 ]
 val_split_rate = 0.1
 test_split_rate = 0.8
@@ -325,14 +327,12 @@ for image_path, gt_path in zip(image_paths, gt_paths):
                     f"警告: 未知的调度器类型 {scheduler_type}，请使用: ReduceLROnPlateau, StepLR, CosineAnnealingLR, CosineAnnealingWarmRestarts, ExponentialLR, MultiStepLR"
                 )
         ################################# 开始一个种子的训练和验证 ##################################
-        best_train_loss = float("inf")
-        best_train_acc = 0.0
-        best_train_epoch = 0
-        best_val_loss = float("inf")
-        best_val_acc = 0.0
-        best_val_epoch = 0
-        avg_val_loss = float("inf")
-        val_acc = 0.0
+        best_loss = float("inf")
+        best_acc = 0.0
+        best_epoch = 0
+        metric_type = "Val" if val_split_rate > 0 else "Train"
+        start_save_epoch_idx = num_epochs - 50
+
         start_time = time.time()  # 记录每个种子开始时间
         for epoch in range(num_epochs):
             print(f"{data_name}_{seed_idx + 1}_Epoch[{epoch + 1}/{num_epochs}]")
@@ -353,6 +353,7 @@ for image_path, gt_path in zip(image_paths, gt_paths):
                 avg_train_loss,
                 train_acc,
                 train_time,
+                optimizer.param_groups[0]["lr"],  # 传入当前学习率
             )
             print(  # 打印训练集结果
                 f"    Train -> Loss: {avg_train_loss:.4f}, Accuracy: {train_acc:.2f}%, Time: {train_time:.2f}s"
@@ -387,59 +388,61 @@ for image_path, gt_path in zip(image_paths, gt_paths):
             )
             ############################### 更新学习率 ##################################
             if scheduler is not None:
-                if scheduler_type == "ReduceLROnPlateau" and val_split_rate > 0:
-                    scheduler.step(avg_val_loss)  # 根据验证损失更新学习率（使用float）
+                if scheduler_type == "ReduceLROnPlateau":
+                    if val_split_rate > 0:
+                        scheduler.step(
+                            avg_val_loss
+                        )  # 根据验证损失更新学习率（使用float）
                 else:
                     scheduler.step()  # 根据epoch更新学习率
                 current_lr = optimizer.param_groups[0]["lr"]
                 print(f"    当前学习率: {current_lr:.6f}")
             ############################### 每个epoch保存当前最佳模型 ##################################
+            # 确定当前指标
             if val_split_rate > 0:
-                if avg_val_loss < best_val_loss:
-                    best_val_loss = avg_val_loss
-                    best_val_acc = val_acc
-                    best_val_epoch = epoch + 1
-                    torch.save(
-                        model.state_dict(),
-                        os.path.join(weights_dir, f"{seed_idx + 1}.pth"),
-                    )
-                    print(
-                        f"Best model saved at Epoch {best_val_epoch} with Val Loss: {best_val_loss:.4f} Val Accuracy: {best_val_acc:.2f}%"
-                    )
+                current_loss = avg_val_loss
+                current_acc = val_acc
             else:
-                if avg_train_loss < best_train_loss:
-                    best_train_loss = avg_train_loss
-                    best_train_acc = train_acc
-                    best_train_epoch = epoch + 1
+                current_loss = avg_train_loss
+                current_acc = train_acc
+
+            # 1. 倒数第50轮 (进入保存阶段的第一轮)：固定保存，并作为基准
+            if epoch == start_save_epoch_idx:
+                best_loss = current_loss
+                best_acc = current_acc
+                best_epoch = epoch + 1
+                torch.save(
+                    model.state_dict(),
+                    os.path.join(weights_dir, f"{seed_idx + 1}.pth"),
+                )
+                print(
+                    f"Model saved at Epoch {best_epoch} (Start of last 50 epochs) with {metric_type} Loss: {best_loss:.4f} {metric_type} Accuracy: {best_acc:.2f}%"
+                )
+
+            # 2. 最后50轮的后续轮次：如果性能更好则保存
+            elif epoch > start_save_epoch_idx:
+                if current_loss < best_loss:
+                    best_loss = current_loss
+                    best_acc = current_acc
+                    best_epoch = epoch + 1
                     torch.save(
                         model.state_dict(),
                         os.path.join(weights_dir, f"{seed_idx + 1}.pth"),
                     )
                     print(
-                        f"Best model saved at Epoch {best_train_epoch} with Train Loss: {best_train_loss:.4f} Train Accuracy: {best_train_acc:.2f}%"
+                        f"Best model saved at Epoch {best_epoch} with {metric_type} Loss: {best_loss:.4f} {metric_type} Accuracy: {best_acc:.2f}%"
                     )
         end_time = time.time()  # 记录每个种子结束时间
         total_training_time = end_time - start_time  # 计算每个种子训练时间
         print(f"Training time: {total_training_time:.2f} seconds")
         ################################# 记录一个种子的最佳模型信息 ##################################
-        # 确定保存模型时的loss和acc
-        if val_split_rate > 0:
-            saved_loss = best_val_loss
-            saved_acc = best_val_acc
-            saved_epoch = best_val_epoch
-            saved_type = "Val"
-        else:
-            saved_loss = best_train_loss
-            saved_acc = best_train_acc
-            saved_epoch = best_train_epoch
-            saved_type = "Train"
         logger.each_seed(  # 记录一个种子的最佳模型信息到TensorBoard
             data_name,
             seed_idx + 1,
-            saved_loss,
-            saved_acc,
-            saved_epoch,
-            saved_type,
+            best_loss,
+            best_acc,
+            best_epoch,
+            metric_type,
         )
         ################################# 完成一个种子训练和验证后的测试评估 ##################################
         model.load_state_dict(  # 加载一个种子的最佳模型
@@ -500,10 +503,10 @@ for image_path, gt_path in zip(image_paths, gt_paths):
                 "kappa": kappa,
                 "performance": (oa + aa + kappa) / 3.0,  # 性能指标
                 "class_accuracies": class_accuracies,
-                "best_model_loss": saved_loss,
-                "best_model_acc": saved_acc,
-                "best_model_epoch": saved_epoch,
-                "best_model_type": saved_type,
+                "best_model_loss": best_loss,
+                "best_model_acc": best_acc,
+                "best_model_epoch": best_epoch,
+                "best_model_type": metric_type,
             }
         )
 

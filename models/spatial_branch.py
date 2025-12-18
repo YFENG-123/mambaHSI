@@ -1,50 +1,152 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+
+
+class SKFusion(nn.Module):
+    """
+    Selective Kernel Fusion (SK Fusion)
+    
+    目的：
+    V3.8 的 Coordinate Attention 虽然引入了位置信息，但在多尺度特征融合上仍然是简单的拼接 (Concat)。
+    对于 Class 7/9 这样的小样本，它们需要极小的感受野 (3x3)，而大背景需要大感受野 (7x7)。
+    简单的拼接让网络必须在所有位置同时处理所有尺度的特征，容易引入噪声。
+    
+    SK Fusion 允许网络根据输入图像的内容，**动态地**为每个像素（或通道）选择最合适的感受野尺度。
+    - 对于小物体区域，增加 3x3 分支的权重。
+    - 对于大平滑区域，增加 7x7 分支的权重。
+    这种动态选择机制比静态的 Attention 更稳健，能有效解决小样本被大尺度特征淹没的问题。
+    """
+    def __init__(self, channels, branches=3, reduction=16):
+        super(SKFusion, self).__init__()
+        self.branches = branches
+        d = max(channels // reduction, 32)
+        
+        # 1. 全局信息聚合
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        
+        # 2. 紧凑特征描述 (FC -> ReLU)
+        self.fc = nn.Sequential(
+            nn.Linear(channels, d, bias=False),
+            nn.LayerNorm(d), # 使用 LayerNorm 保持梯度稳定
+            nn.ReLU(inplace=True)
+        )
+        
+        # 3. 权重生成 (FC -> Softmax)
+        self.fcs = nn.ModuleList([])
+        for i in range(branches):
+            self.fcs.append(nn.Linear(d, channels, bias=False))
+            
+        self.softmax = nn.Softmax(dim=0)
+
+    def forward(self, x_branches):
+        # x_branches: list of tensors [B, C, H, W]
+        
+        # Element-wise Sum
+        U = sum(x_branches) # (B, C, H, W)
+        
+        # Global Pooling
+        s = self.avg_pool(U).flatten(1) # (B, C)
+        
+        # Compact Descriptor
+        z = self.fc(s) # (B, d)
+        
+        # Generate Weights
+        weights = []
+        for fc in self.fcs:
+            weights.append(fc(z).unsqueeze(-1).unsqueeze(-1)) # (B, C, 1, 1)
+            
+        weights = torch.stack(weights, dim=0) # (Branches, B, C, 1, 1)
+        weights = self.softmax(weights) # Normalize across branches
+        
+        # Weighted Sum
+        V = 0
+        for i, x in enumerate(x_branches):
+            V += x * weights[i]
+            
+        return V
 
 
 class SpatialBranchModule(nn.Module):
     """
-    空间分支模块：多尺度卷积融合
+    空间分支模块：High-Capacity + Selective Kernel Fusion (V3.9)
     
-    包含三个并行卷积分支：
-    - 3x3 卷积
-    - 5x5 卷积
-    - 7x7 卷积
-    
-    使用可学习的加权融合将三个分支的特征融合，并加入LayerNorm和Dropout防止过拟合。
+    改进：
+    1. **保持 High Capacity**：继续使用 `mid_channels = out_channels`。
+    2. **引入 SK Fusion**：替代之前的 `Concat + Conv + Attention`。
+       - V3.8 的 Attention 是“事后诸葛亮”（融合后再加权）。
+       - V3.9 的 SK Fusion 是“因地制宜”（在融合时就动态选择最佳尺度）。
+       这能从根本上提升对不同尺度物体（特别是 Class 7/9 等小目标）的适应能力，消除种子间的方差。
     """
     def __init__(self, in_channels, out_channels, dropout_rate=0.5):
         super().__init__()
-        self.conv3 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
-        self.conv5 = nn.Conv2d(in_channels, out_channels, kernel_size=5, padding=2)
-        self.conv7 = nn.Conv2d(in_channels, out_channels, kernel_size=7, padding=3)
         
-        # 可学习的融合权重（三个分支的权重）
-        self.fusion_weights = nn.Parameter(torch.ones(3) / 3)  # 初始化为均匀权重
+        # High Capacity
+        mid_channels = out_channels 
+        
+        # Branch 1: 3x3
+        self.branch3 = nn.Sequential(
+            nn.Conv2d(in_channels, mid_channels, kernel_size=3, padding=1),
+            nn.GroupNorm(1, mid_channels),
+            nn.GELU()
+        )
+        
+        # Branch 2: 5x5 (Stacked 3x3)
+        self.branch5 = nn.Sequential(
+            nn.Conv2d(in_channels, mid_channels, kernel_size=3, padding=1),
+            nn.GroupNorm(1, mid_channels),
+            nn.GELU(),
+            nn.Conv2d(mid_channels, mid_channels, kernel_size=3, padding=1),
+            nn.GroupNorm(1, mid_channels),
+            nn.GELU()
+        )
+        
+        # Branch 3: 7x7 (Stacked 3x3)
+        self.branch7 = nn.Sequential(
+            nn.Conv2d(in_channels, mid_channels, kernel_size=3, padding=1),
+            nn.GroupNorm(1, mid_channels),
+            nn.GELU(),
+            nn.Conv2d(mid_channels, mid_channels, kernel_size=3, padding=1),
+            nn.GroupNorm(1, mid_channels),
+            nn.GELU(),
+            nn.Conv2d(mid_channels, mid_channels, kernel_size=3, padding=1),
+            nn.GroupNorm(1, mid_channels),
+            nn.GELU()
+        )
+        
+        # Selective Kernel Fusion
+        self.sk_fusion = SKFusion(mid_channels, branches=3)
+        
+        # Fusion Projection (Optional, keeps dimensions consistent)
+        self.fusion_conv = nn.Conv2d(mid_channels, out_channels, kernel_size=1)
+        
+        # Shortcut for ResBlock
+        self.shortcut = nn.Sequential()
+        if in_channels != out_channels:
+            self.shortcut = nn.Conv2d(in_channels, out_channels, kernel_size=1)
 
-        # 更通用的LayerNorm做法是 permute 后 norm 再 permute 回来，或者使用 BatchNorm2d / GroupNorm
-        # 这里为了稳健性，使用 GroupNorm 或者 BatchNorm2d 可能更好，但题目语境倾向于 transformer 风格的 LayerNorm
-        # 不过 pytorch 的 LayerNorm 通常作用在 last dimension。对于 (B, C, H, W)，需要 permute。
-        self.norm_layer = nn.GroupNorm(1, out_channels) # GroupNorm(1, C) 等价于 LayerNorm 但支持 (B, C, H, W) 格式
+        self.norm_layer = nn.GroupNorm(1, out_channels)
         self.act = nn.GELU()
         self.dropout = nn.Dropout2d(dropout_rate)
 
     def forward(self, x):
         # x shape: (B, C, H, W)
-        x3 = self.conv3(x)
-        x5 = self.conv5(x)
-        x7 = self.conv7(x)
+        x3 = self.branch3(x)
+        x5 = self.branch5(x)
+        x7 = self.branch7(x)
         
-        # 使用softmax归一化权重，确保权重和为1
-        weights = torch.softmax(self.fusion_weights, dim=0)
+        # SK Fusion (Dynamic Selection)
+        out = self.sk_fusion([x3, x5, x7])
         
-        # 可学习的加权融合
-        out = weights[0] * x3 + weights[1] * x5 + weights[2] * x7
+        # Linear Projection
+        out = self.fusion_conv(out)
         
-        # 归一化 + 激活 + Dropout
+        # 残差连接
+        out = out + self.shortcut(x)
+        
+        # 后处理
         out = self.norm_layer(out)
         out = self.act(out)
         out = self.dropout(out)
         
         return out
-

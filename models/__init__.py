@@ -9,7 +9,7 @@ from .spatial_branch import SpatialBranchModule
 from .spectral_branch import SpectralBranchModule
 from .bidirectional_mamba import BidirectionalMamba
 from .classifier import Classifier
-from .class_aware_enhancement import ClassAwareFeatureEnhancement
+from .fusion_module import FusionModule
 
 __all__ = [
     "MambaHSINet",
@@ -18,5 +18,5 @@ __all__ = [
     "SpectralBranchModule",
     "BidirectionalMamba",
     "Classifier",
-    "ClassAwareFeatureEnhancement",
+    "FusionModule",
 ]

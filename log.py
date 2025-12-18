@@ -27,7 +27,7 @@ class Log:
         """关闭TensorBoard writer"""
         self.writer.close()
 
-    def each_train(self, data_name, seed_idx, epoch, avg_train_loss, train_acc, train_time):
+    def each_train(self, data_name, seed_idx, epoch, avg_train_loss, train_acc, train_time, current_lr):
         """
         记录每次训练的结果到TensorBoard
         
@@ -38,17 +38,25 @@ class Log:
             avg_train_loss: 平均训练损失
             train_acc: 训练准确率
             train_time: 训练时间
+            current_lr: 当前学习率
         """
-        self.writer.add_scalars(  # TensorBoard 写入 Loss
-            f"Loss_{self.timestamp}_{data_name}",
-            {f"Train_{seed_idx}": avg_train_loss},
+        # 合并 Loss 和 Learning Rate 到一张图
+        self.writer.add_scalars(
+            f"Loss_LR_{self.timestamp}_{data_name}",
+            {
+                f"Train_Loss_{seed_idx}": avg_train_loss,
+                f"LR_{seed_idx}": current_lr
+            },
             epoch,
         )
-        self.writer.add_scalars(  # TensorBoard 写入 Accuracy
+
+        # Acc 单独一张图
+        self.writer.add_scalars(
             f"Accuracy_{self.timestamp}_{data_name}",
-            {f"Train_{seed_idx}": train_acc},
+            {f"Train_Acc_{seed_idx}": train_acc},
             epoch,
         )
+        
         self.writer.add_scalars(  # TensorBoard 写入训练时间
             f"Time_{self.timestamp}_{data_name}",
             {f"Train_{seed_idx}": train_time},
@@ -67,16 +75,23 @@ class Log:
             val_acc: 验证准确率
             val_time: 验证时间
         """
-        self.writer.add_scalars(  # TensorBoard 写入 Loss
-            f"Loss_{self.timestamp}_{data_name}",
-            {f"Val_{seed_idx}": avg_val_loss},
+        # Loss 单独绘制 (或保留与 LR 相同的 Tag 以便对比，虽然 val 阶段没有 LR 变化)
+        # 为了与 Train Loss 在同一图表中，我们使用相同的 Tag: Loss_LR_{...}
+        self.writer.add_scalars(
+            f"Loss_LR_{self.timestamp}_{data_name}",
+            {
+                f"Val_Loss_{seed_idx}": avg_val_loss,
+            },
             epoch,
         )
-        self.writer.add_scalars(  # TensorBoard 写入 Accuracy
+
+        # Acc 单独一张图 (与 Train Acc 同一个图表 Tag)
+        self.writer.add_scalars(
             f"Accuracy_{self.timestamp}_{data_name}",
-            {f"Val_{seed_idx}": val_acc},
+            {f"Val_Acc_{seed_idx}": val_acc},
             epoch,
         )
+        
         self.writer.add_scalars(  # TensorBoard 写入验证时间
             f"Time_{self.timestamp}_{data_name}",
             {f"Val_{seed_idx}": val_time},
@@ -107,25 +122,15 @@ class Log:
             total_training_time: 总训练时间
             class_accuracies: 各类别精度列表
         """
-        # 写入测试结果指标
+        # 合并 AA, Kappa, OA, Performance 到一张图
         self.writer.add_scalars(
-            f"OA_{self.timestamp}",
-            {data_name: oa},
-            seed_idx,  # x轴：种子序号
-        )
-        self.writer.add_scalars(
-            f"AA_{self.timestamp}",
-            {data_name: aa},
-            seed_idx,  # x轴：种子序号
-        )
-        self.writer.add_scalars(
-            f"Kappa_{self.timestamp}",
-            {data_name: kappa},
-            seed_idx,  # x轴：种子序号
-        )
-        self.writer.add_scalars(
-            f"Performance_{self.timestamp}",
-            {data_name: performance},
+            f"Test_Metrics_AKOP_{self.timestamp}",
+            {
+                f"AA_{data_name}": aa,
+                f"Kappa_{data_name}": kappa,
+                f"OA_{data_name}": oa,
+                f"Performance_{data_name}": performance
+            },
             seed_idx,  # x轴：种子序号
         )
         self.writer.add_scalars(
@@ -163,20 +168,14 @@ class Log:
             saved_epoch: 最佳模型产生的epoch
             saved_type: 最佳模型类型（"Train"或"Val"）
         """
-        # 写入最佳模型信息
+        # 合并 Best Acc, Best Epoch, Best Loss 到一张图
         self.writer.add_scalars(
-            f"Best_Model_Loss_{self.timestamp}",
-            {data_name: saved_loss},
-            seed_idx,  # x轴：种子序号
-        )
-        self.writer.add_scalars(
-            f"Best_Model_Accuracy_{self.timestamp}",
-            {data_name: saved_acc},
-            seed_idx,  # x轴：种子序号
-        )
-        self.writer.add_scalars(
-            f"Best_Model_Epoch_{self.timestamp}",
-            {data_name: saved_epoch},
+            f"Best_Model_Metrics_{self.timestamp}",
+            {
+                f"Best_Loss_{data_name}": saved_loss,
+                f"Best_Acc_{data_name}": saved_acc,
+                f"Best_Epoch_{data_name}": saved_epoch
+            },
             seed_idx,  # x轴：种子序号
         )
 
@@ -205,24 +204,15 @@ class Log:
         # 将平均结果添加到原始值表格的最后一个点后面第5个点位置
         avg_position = len_seeds + 5
         
+        # 合并 AA, Kappa, OA, Performance 到一张图 (Average)
         self.writer.add_scalars(
-            f"OA_{self.timestamp}",
-            {f"{data_name}_Average": average_oa},
-            avg_position,
-        )
-        self.writer.add_scalars(
-            f"AA_{self.timestamp}",
-            {f"{data_name}_Average": average_aa},
-            avg_position,
-        )
-        self.writer.add_scalars(
-            f"Kappa_{self.timestamp}",
-            {f"{data_name}_Average": average_kappa},
-            avg_position,
-        )
-        self.writer.add_scalars(
-            f"Performance_{self.timestamp}",
-            {f"{data_name}_Average": average_performance},
+            f"Test_Metrics_AKOP_{self.timestamp}",
+            {
+                f"AA_{data_name}_Average": average_aa,
+                f"Kappa_{data_name}_Average": average_kappa,
+                f"OA_{data_name}_Average": average_oa,
+                f"Performance_{data_name}_Average": average_performance
+            },
             avg_position,
         )
         self.writer.add_scalars(

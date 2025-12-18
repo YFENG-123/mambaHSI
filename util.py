@@ -26,22 +26,22 @@ class FocalLoss(nn.Module):
     """
     Focal Loss用于解决类别不平衡问题
     通过降低易分类样本的权重，使模型更关注难分类样本
-    
+
     Focal Loss = alpha * (1 - pt)^gamma * CE_loss
     其中 pt 是模型对真实类别的预测概率
-    
+
     Args:
         alpha: 平衡因子，可以是标量或每个类别的权重张量，默认为1.0
         gamma: 聚焦参数，控制难易样本的权重，gamma越大，难样本权重越高，默认为2.0
         reduction: 损失归约方式，'mean'、'sum'或'none'，默认为'mean'
     """
-    
-    def __init__(self, alpha=1.0, gamma=2.0, reduction='mean'):
+
+    def __init__(self, alpha=1.0, gamma=2.0, reduction="mean"):
         super(FocalLoss, self).__init__()
         self.alpha = alpha
         self.gamma = gamma
         self.reduction = reduction
-    
+
     def forward(self, inputs, targets):
         """
         Args:
@@ -51,11 +51,11 @@ class FocalLoss(nn.Module):
             focal loss值
         """
         # 计算交叉熵损失（不归约）
-        ce_loss = nn.functional.cross_entropy(inputs, targets, reduction='none')
-        
+        ce_loss = nn.functional.cross_entropy(inputs, targets, reduction="none")
+
         # 计算预测概率 pt = exp(-ce_loss)
         pt = torch.exp(-ce_loss)
-        
+
         # 如果alpha是张量，需要根据targets索引对应的alpha值
         if isinstance(self.alpha, torch.Tensor):
             # 确保alpha张量在正确的设备上
@@ -65,14 +65,14 @@ class FocalLoss(nn.Module):
                 alpha_t = self.alpha[targets]
         else:
             alpha_t = self.alpha
-        
+
         # 计算focal loss
         focal_loss = alpha_t * (1 - pt) ** self.gamma * ce_loss
-        
+
         # 根据reduction方式归约
-        if self.reduction == 'mean':
+        if self.reduction == "mean":
             return focal_loss.mean()
-        elif self.reduction == 'sum':
+        elif self.reduction == "sum":
             return focal_loss.sum()
         else:
             return focal_loss
@@ -118,9 +118,12 @@ def load_data(
     for i in range(1, max_label + 1):
         random.shuffle(label_index_list[i])
         test_split_index = int(len(label_index_list[i]) * test_split_rate)
-        val_split_index = int(
-            len(label_index_list[i]) * (test_split_rate + val_split_rate)
-        )
+
+        # 计算训练集数量，向上取整
+        train_split_rate = 1 - test_split_rate - val_split_rate
+        train_num = int(np.ceil(len(label_index_list[i]) * train_split_rate))
+        val_split_index = len(label_index_list[i]) - train_num
+
         test_label_index_list.extend(label_index_list[i][:test_split_index])
         val_label_index_list.extend(
             label_index_list[i][test_split_index:val_split_index]
@@ -285,7 +288,7 @@ def step(model, loader, criterion, optimizer, mode):
     )
 
 
-def calculate_seed_result( # 计算一个种子结果的函数
+def calculate_seed_result(  # 计算一个种子结果的函数
     avg_test_loss,
     test_accuracy,
     all_test_predictions,
@@ -322,15 +325,15 @@ def calculate_seed_result( # 计算一个种子结果的函数
     return oa, aa, kappa, cm, class_accuracies
 
 
-def calculate_dataset_result( # 计算一个数据集的结果
+def calculate_dataset_result(  # 计算一个数据集的结果
     experiment_results,
 ):
     """
     计算一个数据集所有种子的平均结果
-    
+
     Args:
         experiment_results: 包含所有种子实验结果的列表
-    
+
     Returns:
         平均值和标准差元组: (average_oa, average_aa, average_kappa, average_performance,
         average_training_time, average_test_loss, average_best_model_loss, average_best_model_acc,
@@ -347,7 +350,7 @@ def calculate_dataset_result( # 计算一个数据集的结果
     best_model_loss_values = [exp["best_model_loss"] for exp in experiment_results]
     best_model_acc_values = [exp["best_model_acc"] for exp in experiment_results]
     best_model_epoch_values = [exp["best_model_epoch"] for exp in experiment_results]
-    
+
     average_oa = np.mean(oa_values)
     average_aa = np.mean(aa_values)
     average_kappa = np.mean(kappa_values)
@@ -357,7 +360,7 @@ def calculate_dataset_result( # 计算一个数据集的结果
     average_best_model_loss = np.mean(best_model_loss_values)
     average_best_model_acc = np.mean(best_model_acc_values)
     average_best_model_epoch = np.mean(best_model_epoch_values)
-    
+
     std_oa = np.std(oa_values)
     std_aa = np.std(aa_values)
     std_kappa = np.std(kappa_values)
@@ -367,7 +370,7 @@ def calculate_dataset_result( # 计算一个数据集的结果
     std_best_model_loss = np.std(best_model_loss_values)
     std_best_model_acc = np.std(best_model_acc_values)
     std_best_model_epoch = np.std(best_model_epoch_values)
-    
+
     return (
         average_oa,
         average_aa,
@@ -390,7 +393,7 @@ def calculate_dataset_result( # 计算一个数据集的结果
     )
 
 
-def generate_picture( # 生成测试集结果可视化图片
+def generate_picture(  # 生成测试集结果可视化图片
     confusion_matrix,
     num_classes,
     prediction_map,
@@ -553,7 +556,7 @@ def generate_picture( # 生成测试集结果可视化图片
     plt.close()
 
 
-def write_results_to_txt( # 将实验结果写入txt文件
+def write_results_to_txt(  # 将实验结果写入txt文件
     results_txt_path,
     data_name,
     experiment_results,

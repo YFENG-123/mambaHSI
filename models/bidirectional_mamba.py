@@ -1,18 +1,19 @@
-import torch
 import torch.nn as nn
 from .s6_core import S6Core
 
 
 class BidirectionalMamba(nn.Module):
     """
-    双向Mamba模块
+    双向Mamba模块：纯净版 (Pure SSM) - V4.4
     
-    实现双向扫描以捕获全图上下文：
-    - 前向流：使用S6Core处理原始序列
-    - 后向流：翻转输入 -> S6Core处理 -> 翻转输出
-    - 融合：前向和后向结果相加
+    改进：
+    在 V4.3 (Pure SSM) 的基础上，进一步精简。
+    移除 `Residual` 连接。
     
-    使用Pre-Norm Residual结构以提高训练稳定性。
+    原因：
+    - Mamba 内部是 `x + residual`，而 MambaHSINet 主干中调用 Mamba 时也是 `x = mamba(x) + x`。
+    - 这导致了双重残差连接，不仅增加了梯度路径的复杂性，还可能导致信号强度在深层被过度放大，引起训练不稳定或收敛震荡。
+    - 鉴于我们追求“精简模型”，去除模块内部冗余的残差连接，让主干网络的残差机制全权负责梯度流，有助于更平滑的训练。
     """
     
     def __init__(
@@ -20,45 +21,34 @@ class BidirectionalMamba(nn.Module):
         d_model=64,
         dropout_rate=0.5,
     ):
-        """
-        Args:
-            d_model: 特征维度
-            dropout_rate: Dropout比率
-        """
         super().__init__()
         self.d_model = d_model
         
-        # 双向Mamba核心
+        # Global Context: Bidirectional SSM
         self.mamba_fwd = S6Core(d_model=d_model)
         self.mamba_bwd = S6Core(d_model=d_model)
         
-        # Pre-Norm结构
-        self.mamba_norm = nn.LayerNorm(d_model)
-        self.mamba_dropout = nn.Dropout(dropout_rate)
+        # Norm & Dropout
+        self.norm = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout_rate)
     
     def forward(self, x):
         """
         Args:
             x: 输入特征 (batch, seq_len, d_model)
-        Returns:
-            输出特征 (batch, seq_len, d_model)
         """
-        # Pre-Norm Residual Block
-        residual = x
-        x_norm = self.mamba_norm(x)
+        # 1. 归一化
+        x_norm = self.norm(x)
         
-        # 前向流
+        # 2. Bidirectional SSM
         x_fwd = self.mamba_fwd(x_norm)
-        
-        # 后向流 (翻转输入 -> 处理 -> 翻转输出)
         x_bwd = self.mamba_bwd(x_norm.flip(dims=[1])).flip(dims=[1])
+        x_ssm = x_fwd + x_bwd
         
-        # 融合: 相加
-        x_mamba = x_fwd + x_bwd
+        # 3. Dropout
+        out = self.dropout(x_ssm)
         
-        # Dropout和残差连接
-        x_mamba = self.mamba_dropout(x_mamba)
-        x_mamba = x_mamba + residual
+        # 移除内部 Residual，依赖外部主干网络的 Residual
+        # out = out + x 
         
-        return x_mamba
-
+        return out
