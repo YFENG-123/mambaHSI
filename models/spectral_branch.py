@@ -5,18 +5,16 @@ import torch.nn.functional as F
 
 class SpectralBranchModule(nn.Module):
     """
-    光谱分支模块：Spectral Smoothing + Multi-Scale CNN + Attention Pooling (V4.6 Reverted)
+    光谱分支模块：Spectral Smoothing + Multi-Scale CNN + Attention Pooling (V4.6)
     
-    回退说明：
-    V4.9 的 Spatial-Spectral Smoothing (2D) 导致了严重的训练不稳定和验证集崩溃（Acc < 70%）。
-    这表明强制的 2D 空间平滑可能破坏了光谱特征的完整性，或者引入了难以优化的参数。
-    
-    我们回退到 **V4.6** 版本，该版本表现最为稳定（OA ~97.5%，Class 9 ~83%）。
-    
-    微调：
-    在 V4.6 的基础上，为 Smoothing Layer 增加一个 **残差连接 (Residual Connection)**。
-    - Out = Raw + Smooth(Raw)
-    - 目的：防止平滑层过度模糊信号，保证原始光谱信息能够直接传递，同时利用平滑层补充去噪后的特征。
+    改进：
+    1. **新增 Spectral Smoothing Layer**：
+       在多尺度特征提取之前，增加一个 3x3 的深度卷积 (Depthwise Conv)。
+       - 目的：对原始光谱数据进行平滑预处理，滤除高频噪声（Spikes）。
+       - 原因：Class 9 的剧烈波动 (31% - 100%) 表明模型对输入光谱的微小扰动极其敏感。通过预先平滑，可以提升对噪声的鲁棒性。
+       
+    2. **保持 Learnable Attention Pooling**：
+       V4.5 的 Attention Pooling 机制本身是好的，配合平滑后的输入，应能更稳定地聚焦关键波段。
     """
     def __init__(self, in_channels, out_channels, dropout_rate=0.5):
         super().__init__()
@@ -25,9 +23,11 @@ class SpectralBranchModule(nn.Module):
         self.out_channels = out_channels
         self.feat_channels = 16 
         
-        # 1. Spectral Smoothing Layer (Pre-processing) - 1D Depthwise
+        # 1. Spectral Smoothing Layer (Pre-processing)
+        # Depthwise Conv1d: 独立对每个波段/通道进行平滑
+        # 注意：这里的输入是 (N, 1, Bands)。我们需要平滑的是 Bands 维度。
         self.smoothing = nn.Sequential(
-            nn.ReflectionPad1d(1),
+            nn.ReflectionPad1d(1), # 使用反射填充减少边界效应
             nn.Conv1d(1, 1, kernel_size=3, stride=1, padding=0, bias=False), 
             nn.BatchNorm1d(1),
             nn.GELU()
@@ -82,15 +82,13 @@ class SpectralBranchModule(nn.Module):
         h, w, bands = x.shape
         x_seq = x.reshape(-1, 1, bands) # (N, 1, L)
         
-        # Step 1: Smoothing with Residual
-        # Res = Raw + Smooth
+        # Step 1: Smoothing
         x_smooth = self.smoothing(x_seq)
-        x_in = x_seq + x_smooth
         
         # Step 2: Multi-Scale Conv
-        b3 = self.branch3(x_in)
-        b5 = self.branch5(x_in)
-        b7 = self.branch7(x_in)
+        b3 = self.branch3(x_smooth)
+        b5 = self.branch5(x_smooth)
+        b7 = self.branch7(x_smooth)
         
         # Step 3: Attention Pooling
         # Weights: (N, 1, L)
