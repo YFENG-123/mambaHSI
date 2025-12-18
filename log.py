@@ -208,15 +208,15 @@ class Log:
         self.writer.add_scalars(
             f"Test_Metrics_AKOP_{self.timestamp}",
             {
-                f"AA_{data_name}_Average": average_aa,
-                f"Kappa_{data_name}_Average": average_kappa,
-                f"OA_{data_name}_Average": average_oa,
-                f"Performance_{data_name}_Average": average_performance
+                f"Average_AA_{data_name}": average_aa,
+                f"Average_Kappa_{data_name}": average_kappa,
+                f"Average_OA_{data_name}": average_oa,
+                f"Average_Performance_{data_name}": average_performance
             },
             avg_position,
         )
         self.writer.add_scalars(
             f"Training_Time_{self.timestamp}",
-            {f"{data_name}_Average": average_training_time},
+            {f"Average_{data_name}": average_training_time},
             avg_position,
         )
