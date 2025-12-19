@@ -7,6 +7,8 @@ import matplotlib.pyplot as plt
 
 import torch
 import torch.nn as nn
+import torch.optim as optim
+from torch.optim import lr_scheduler
 from torch.utils.data import TensorDataset, DataLoader
 
 
@@ -20,6 +22,94 @@ def set_seed(seed):
     torch.backends.cudnn.benchmark = False
     # 设置环境变量以确保完全确定性
     os.environ["PYTHONHASHSEED"] = str(seed)
+
+
+def calculate_class_weights(class_counts, weight_strategy="inverse_frequency", smoothing=1.0):
+    """
+    根据训练集中各个类别的数量计算类别权重，用于平衡类别不平衡问题
+    
+    Args:
+        class_counts: 每个类别在训练集中的样本数量数组（包含背景类0）
+        weight_strategy: 权重计算策略，可选:
+            - "inverse_frequency": 反频率权重，weight = 1 / count（当前默认方法）
+            - "balanced": 平衡权重，weight = total_samples / (num_classes * count)
+            - "sqrt_inverse": 平方根反频率，weight = 1 / sqrt(count)，对小样本类别更温和
+            - "smooth_inverse": 平滑反频率，weight = 1 / (count + smoothing)，可调节平滑度
+            - "effective_num": 有效样本数方法，基于论文"Class-Balanced Loss Based on Effective Number of Samples"
+        smoothing: 平滑参数，用于"smooth_inverse"策略，默认1.0
+    
+    Returns:
+        类别权重张量，形状为(num_classes,)
+    """
+    eps = 1e-8
+    num_classes = len(class_counts)
+    class_weights_np = np.zeros_like(class_counts, dtype=np.float32)
+    
+    # 计算非零类别的总数和总样本数
+    valid_classes = class_counts > 0
+    total_samples = class_counts.sum()
+    num_valid_classes = valid_classes.sum()
+    
+    if weight_strategy == "inverse_frequency":
+        # 反频率权重：样本数越少，权重越大
+        for i in range(num_classes):
+            if class_counts[i] > 0:
+                class_weights_np[i] = 1.0 / (class_counts[i] + eps)
+            else:
+                class_weights_np[i] = 0.0
+    
+    elif weight_strategy == "balanced":
+        # 平衡权重：使得每个类别的总权重贡献相等
+        # weight = total_samples / (num_classes * count)
+        for i in range(num_classes):
+            if class_counts[i] > 0:
+                class_weights_np[i] = total_samples / (num_valid_classes * class_counts[i] + eps)
+            else:
+                class_weights_np[i] = 0.0
+    
+    elif weight_strategy == "sqrt_inverse":
+        # 平方根反频率：对小样本类别更温和，避免权重过大
+        for i in range(num_classes):
+            if class_counts[i] > 0:
+                class_weights_np[i] = 1.0 / (np.sqrt(class_counts[i]) + eps)
+            else:
+                class_weights_np[i] = 0.0
+    
+    elif weight_strategy == "smooth_inverse":
+        # 平滑反频率：通过smoothing参数控制权重大小
+        for i in range(num_classes):
+            if class_counts[i] > 0:
+                class_weights_np[i] = 1.0 / (class_counts[i] + smoothing)
+            else:
+                class_weights_np[i] = 0.0
+    
+    elif weight_strategy == "effective_num":
+        # 有效样本数方法：基于论文"Class-Balanced Loss Based on Effective Number of Samples"
+        # 假设beta=0.9999（可调节），计算有效样本数
+        beta = 0.9999
+        for i in range(num_classes):
+            if class_counts[i] > 0:
+                # 有效样本数 = (1 - beta^n) / (1 - beta)，其中n是类别样本数
+                effective_num = (1.0 - np.power(beta, class_counts[i])) / (1.0 - beta)
+                class_weights_np[i] = 1.0 / (effective_num + eps)
+            else:
+                class_weights_np[i] = 0.0
+    
+    else:
+        # 默认使用反频率权重
+        print(f"警告: 未知的权重策略 {weight_strategy}，使用默认反频率权重")
+        for i in range(num_classes):
+            if class_counts[i] > 0:
+                class_weights_np[i] = 1.0 / (class_counts[i] + eps)
+            else:
+                class_weights_np[i] = 0.0
+    
+    # 归一化权重：使得权重和为num_classes（保持数值稳定性）
+    # 这样每个类别的平均权重约为1
+    if class_weights_np.sum() > 0:
+        class_weights_np = class_weights_np * num_valid_classes / class_weights_np.sum()
+    
+    return torch.from_numpy(class_weights_np).float()
 
 
 class FocalLoss(nn.Module):
@@ -83,6 +173,8 @@ def load_data(
     gt_path,
     val_split_rate=0.0,
     test_split_rate=0.9,
+    weight_strategy="inverse_frequency",
+    smoothing=1.0,
 ):
     # 加载image
     image_dict = sio.loadmat(image_path)
@@ -190,19 +282,11 @@ def load_data(
     )
 
     # 使用在分割阶段计算得到的 class_counts 来生成类别权重（用于 CrossEntropyLoss 的 weight）
-    eps = 1e-8
-    class_weights_np = np.zeros_like(class_counts, dtype=np.float32)
-    for i in range(len(class_counts)):
-        if class_counts[i] > 0:
-            class_weights_np[i] = 1.0 / (class_counts[i] + eps)
-        else:
-            class_weights_np[i] = 0.0
-
-    # 将权重归一化为和为1以保持数值稳定性（可选，但通常有益）
-    if class_weights_np.sum() > 0:
-        class_weights_np = class_weights_np / class_weights_np.sum()
-
-    class_weights = torch.from_numpy(class_weights_np).float()
+    class_weights = calculate_class_weights(
+        class_counts=class_counts,
+        weight_strategy=weight_strategy,
+        smoothing=smoothing,
+    )
 
     # 返回训练集类别权重（用于损失函数/采样器的构造）
 
@@ -578,77 +662,114 @@ def generate_picture(  # 生成测试集结果可视化图片
     plt.close()
 
 
-def init_results_file(results_txt_path, config):
+def init_results_file(
+    results_txt_path,
+    timestamp,
+    num_epochs,
+    learning_rate,
+    dropout_rate,
+    optimizer_type,
+    momentum,
+    weight_decay,
+    nesterov,
+    adam_beta1,
+    adam_beta2,
+    adam_eps,
+    val_split_rate,
+    test_split_rate,
+    loss_type,
+    focal_alpha,
+    focal_gamma,
+    seeds,
+    scheduler_type,
+    scheduler_min_lr,
+    step_size,
+    gamma,
+    T_max,
+    T_0,
+    T_mult,
+    exp_gamma,
+    milestones,
+):
     """Initialize results txt file with experiment header.
 
     Args:
         results_txt_path (str): path to results txt file
-        config (dict): configuration dictionary containing keys used below
+        timestamp (str): experiment timestamp
+        num_epochs (int): number of training epochs
+        learning_rate (float): learning rate
+        dropout_rate (float): dropout rate
+        optimizer_type (str): optimizer type
+        momentum (float): momentum factor
+        weight_decay (float): weight decay
+        nesterov (bool): whether to use Nesterov momentum
+        adam_beta1 (float): Adam beta1 parameter
+        adam_beta2 (float): Adam beta2 parameter
+        adam_eps (float): Adam epsilon parameter
+        val_split_rate (float): validation split rate
+        test_split_rate (float): test split rate
+        loss_type (str): loss function type
+        focal_alpha (float): Focal Loss alpha parameter
+        focal_gamma (float): Focal Loss gamma parameter
+        seeds (list): list of random seeds
+        scheduler_type (str): scheduler type, "None" means no scheduler
+        scheduler_min_lr (float): minimum learning rate
+        step_size (int): step size for StepLR
+        gamma (float): decay factor
+        T_max (int): maximum period for CosineAnnealingLR
+        T_0 (int): initial period for CosineAnnealingWarmRestarts
+        T_mult (int): period multiplier for CosineAnnealingWarmRestarts
+        exp_gamma (float): exponential decay factor
+        milestones (list): milestones for MultiStepLR
     """
     with open(results_txt_path, "w", encoding="utf-8") as results_file:
         results_file.write("=" * 120 + "\n")
-        results_file.write(f"实验结果记录 - {config.get('timestamp', '')}\n")
+        results_file.write(f"实验结果记录 - {timestamp}\n")
         results_file.write("=" * 120 + "\n")
         results_file.write("超参数设置:\n")
-        results_file.write(f"  训练轮数: {config.get('num_epochs')}\n")
-        results_file.write(f"  学习率: {config.get('learning_rate')}\n")
-        results_file.write(f"  Dropout率: {config.get('dropout_rate')}\n")
-        results_file.write(f"  优化器类型: {config.get('optimizer_type')}\n")
-        opt = config.get("optimizer_type")
-        if opt == "SGD":
-            results_file.write(f"    动量: {config.get('momentum')}\n")
-            results_file.write(f"    权重衰减: {config.get('weight_decay')}\n")
-            results_file.write(f"    Nesterov: {config.get('nesterov')}\n")
-        elif opt in ["Adam", "AdamW"]:
-            results_file.write(f"    Beta1: {config.get('adam_beta1')}\n")
-            results_file.write(f"    Beta2: {config.get('adam_beta2')}\n")
-            results_file.write(f"    Epsilon: {config.get('adam_eps')}\n")
-            results_file.write(f"    权重衰减: {config.get('weight_decay')}\n")
-        elif opt == "RMSprop":
-            results_file.write(f"    动量: {config.get('momentum')}\n")
-            results_file.write(f"    权重衰减: {config.get('weight_decay')}\n")
-        elif opt == "Adagrad":
-            results_file.write(f"    权重衰减: {config.get('weight_decay')}\n")
-            results_file.write(f"    Epsilon: {config.get('adam_eps')}\n")
-        results_file.write(f"  验证集比例: {config.get('val_split_rate')}\n")
-        results_file.write(f"  测试集比例: {config.get('test_split_rate')}\n")
-        if config.get("use_focal_loss"):
-            results_file.write("  损失函数: Focal Loss\n")
-            results_file.write(f"    Alpha: {config.get('focal_alpha')}\n")
-            results_file.write(f"    Gamma: {config.get('focal_gamma')}\n")
-        else:
-            results_file.write("  损失函数: CrossEntropyLoss\n")
-        results_file.write(f"  随机种子: {config.get('seeds')}\n")
-        if config.get("use_scheduler"):
-            results_file.write(
-                f"  学习率调度器: {config.get('scheduler_type')} (PyTorch自带)\n"
-            )
-            st = config.get("scheduler_type")
-            if st == "ReduceLROnPlateau":
-                results_file.write(f"    耐心值: {config.get('scheduler_patience')}\n")
-                results_file.write(f"    衰减因子: {config.get('scheduler_factor')}\n")
-                results_file.write(
-                    f"    最小学习率: {config.get('scheduler_min_lr')}\n"
-                )
-            elif st == "StepLR":
-                results_file.write(f"    步长: {config.get('step_size')}\n")
-                results_file.write(f"    衰减因子: {config.get('gamma')}\n")
-            elif st == "CosineAnnealingLR":
-                results_file.write(f"    周期: {config.get('T_max')}\n")
-                results_file.write(
-                    f"    最小学习率: {config.get('scheduler_min_lr')}\n"
-                )
-            elif st == "CosineAnnealingWarmRestarts":
-                results_file.write(f"    初始周期: {config.get('T_0')}\n")
-                results_file.write(f"    周期倍数: {config.get('T_mult')}\n")
-                results_file.write(
-                    f"    最小学习率: {config.get('scheduler_min_lr')}\n"
-                )
-            elif st == "ExponentialLR":
-                results_file.write(f"    衰减因子: {config.get('exp_gamma')}\n")
-            elif st == "MultiStepLR":
-                results_file.write(f"    里程碑: {config.get('milestones')}\n")
-                results_file.write(f"    衰减因子: {config.get('gamma')}\n")
+        results_file.write(f"  训练轮数: {num_epochs}\n")
+        results_file.write(f"  学习率: {learning_rate}\n")
+        results_file.write(f"  Dropout率: {dropout_rate}\n")
+        results_file.write(f"  优化器类型: {optimizer_type}\n")
+        if optimizer_type == "SGD":
+            results_file.write(f"    动量: {momentum}\n")
+            results_file.write(f"    权重衰减: {weight_decay}\n")
+            results_file.write(f"    Nesterov: {nesterov}\n")
+        elif optimizer_type in ["Adam", "AdamW"]:
+            results_file.write(f"    Beta1: {adam_beta1}\n")
+            results_file.write(f"    Beta2: {adam_beta2}\n")
+            results_file.write(f"    Epsilon: {adam_eps}\n")
+            results_file.write(f"    权重衰减: {weight_decay}\n")
+        elif optimizer_type == "RMSprop":
+            results_file.write(f"    动量: {momentum}\n")
+            results_file.write(f"    权重衰减: {weight_decay}\n")
+        elif optimizer_type == "Adagrad":
+            results_file.write(f"    权重衰减: {weight_decay}\n")
+            results_file.write(f"    Epsilon: {adam_eps}\n")
+        results_file.write(f"  验证集比例: {val_split_rate}\n")
+        results_file.write(f"  测试集比例: {test_split_rate}\n")
+        results_file.write(f"  损失函数类型: {loss_type}\n")
+        if loss_type == "FocalLoss":
+            results_file.write(f"    Alpha: {focal_alpha}\n")
+            results_file.write(f"    Gamma: {focal_gamma}\n")
+        results_file.write(f"  随机种子: {seeds}\n")
+        if scheduler_type != "None":
+            results_file.write(f"  学习率调度器: {scheduler_type} (PyTorch自带)\n")
+            if scheduler_type == "StepLR":
+                results_file.write(f"    步长: {step_size}\n")
+                results_file.write(f"    衰减因子: {gamma}\n")
+            elif scheduler_type == "CosineAnnealingLR":
+                results_file.write(f"    周期: {T_max}\n")
+                results_file.write(f"    最小学习率: {scheduler_min_lr}\n")
+            elif scheduler_type == "CosineAnnealingWarmRestarts":
+                results_file.write(f"    初始周期: {T_0}\n")
+                results_file.write(f"    周期倍数: {T_mult}\n")
+                results_file.write(f"    最小学习率: {scheduler_min_lr}\n")
+            elif scheduler_type == "ExponentialLR":
+                results_file.write(f"    衰减因子: {exp_gamma}\n")
+            elif scheduler_type == "MultiStepLR":
+                results_file.write(f"    里程碑: {milestones}\n")
+                results_file.write(f"    衰减因子: {gamma}\n")
         results_file.write("=" * 120 + "\n\n")
 
 
@@ -813,3 +934,330 @@ def write_results_to_txt(  # 将实验结果写入txt文件
 
     results_file.write(f"{'=' * 120}\n\n")
     results_file.close()
+
+
+def create_criterion(
+    loss_type,
+    class_weights,
+    focal_alpha=1.0,
+    focal_gamma=2.0,
+):
+    """
+    创建损失函数
+
+    Args:
+        loss_type: 损失函数类型，可选: "FocalLoss", "CrossEntropyLoss"
+        class_weights: 类别权重张量
+        focal_alpha: Focal Loss的alpha参数（平衡因子，可以是标量或每个类别的权重）
+        focal_gamma: Focal Loss的gamma参数（聚焦参数，控制难易样本的权重）
+
+    Returns:
+        损失函数对象
+    """
+    if loss_type == "FocalLoss":
+        # 使用每类权重作为Focal Loss的alpha，能让损失函数更关注少数类
+        try:
+            criterion = FocalLoss(
+                alpha=class_weights.to("cuda")
+                if torch.cuda.is_available()
+                else class_weights,
+                gamma=focal_gamma,
+            )
+        except Exception:
+            criterion = FocalLoss(alpha=focal_alpha, gamma=focal_gamma)
+        print(f"使用Focal Loss（alpha=class_weights） gamma={focal_gamma}")
+    elif loss_type == "CrossEntropyLoss":
+        # 使用训练集中统计得到的类别权重，减轻少数类样本稀疏带来的影响
+        try:
+            criterion = nn.CrossEntropyLoss(weight=class_weights.to("cuda"))
+        except Exception:
+            # 如果无法将权重放到CUDA（例如没有GPU），则使用CPU权重
+            criterion = nn.CrossEntropyLoss(weight=class_weights)
+        print("使用CrossEntropyLoss")
+    else:
+        # 默认使用CrossEntropyLoss
+        print(f"警告: 未知的损失函数类型 {loss_type}，使用默认CrossEntropyLoss")
+        try:
+            criterion = nn.CrossEntropyLoss(weight=class_weights.to("cuda"))
+        except Exception:
+            criterion = nn.CrossEntropyLoss(weight=class_weights)
+    return criterion
+
+
+def create_optimizer(
+    model,
+    optimizer_type,
+    learning_rate,
+    momentum=0.9,
+    weight_decay=1e-4,
+    nesterov=False,
+    adam_beta1=0.9,
+    adam_beta2=0.999,
+    adam_eps=1e-8,
+):
+    """
+    创建优化器
+
+    Args:
+        model: 模型对象
+        optimizer_type: 优化器类型，可选: "SGD", "Adam", "AdamW", "RMSprop", "Adagrad"
+        learning_rate: 学习率
+        momentum: 动量因子（用于SGD和RMSprop）
+        weight_decay: 权重衰减（L2正则化）
+        nesterov: 是否使用Nesterov动量（用于SGD）
+        adam_beta1: Adam的beta1参数
+        adam_beta2: Adam的beta2参数
+        adam_eps: Adam的epsilon参数
+
+    Returns:
+        优化器对象
+    """
+    if optimizer_type == "SGD":
+        # SGD: 随机梯度下降优化器
+        optimizer = optim.SGD(
+            model.parameters(),
+            lr=learning_rate,
+            momentum=momentum,
+            weight_decay=weight_decay,
+            nesterov=nesterov,
+        )
+    elif optimizer_type == "Adam":
+        # Adam: 自适应矩估计优化器
+        optimizer = optim.Adam(
+            model.parameters(),
+            lr=learning_rate,
+            betas=(adam_beta1, adam_beta2),
+            eps=adam_eps,
+            weight_decay=weight_decay,
+        )
+    elif optimizer_type == "AdamW":
+        # AdamW: 带权重衰减的Adam优化器
+        optimizer = optim.AdamW(
+            model.parameters(),
+            lr=learning_rate,
+            betas=(adam_beta1, adam_beta2),
+            eps=adam_eps,
+            weight_decay=weight_decay,
+        )
+    elif optimizer_type == "RMSprop":
+        # RMSprop: 均方根传播优化器
+        optimizer = optim.RMSprop(
+            model.parameters(),
+            lr=learning_rate,
+            momentum=momentum,
+            weight_decay=weight_decay,
+        )
+    elif optimizer_type == "Adagrad":
+        # Adagrad: 自适应梯度优化器
+        optimizer = optim.Adagrad(
+            model.parameters(),
+            lr=learning_rate,
+            weight_decay=weight_decay,
+            eps=adam_eps,
+        )
+    else:
+        # 默认使用SGD
+        print(f"警告: 未知的优化器类型 {optimizer_type}，使用默认SGD")
+        optimizer = optim.SGD(
+            model.parameters(),
+            lr=learning_rate,
+            momentum=momentum,
+            weight_decay=weight_decay,
+        )
+    return optimizer
+
+
+def create_scheduler(
+    optimizer,
+    scheduler_type,
+    val_split_rate=0.0,
+    scheduler_min_lr=5e-5,
+    step_size=100,
+    gamma=0.5,
+    T_max=1000,
+    T_0=250,
+    T_mult=1,
+    exp_gamma=0.95,
+    milestones=None,
+):
+    """
+    创建学习率调度器
+
+    Args:
+        optimizer: 优化器对象
+        scheduler_type: 调度器类型，可选: "None", "StepLR", "CosineAnnealingLR",
+                        "CosineAnnealingWarmRestarts", "ExponentialLR", "MultiStepLR"
+                        ("None"表示不使用调度器)
+        val_split_rate: 验证集比例
+        scheduler_min_lr: 最小学习率
+        step_size: StepLR的步长
+        gamma: StepLR和MultiStepLR的衰减因子
+        T_max: CosineAnnealingLR的周期
+        T_0: CosineAnnealingWarmRestarts的初始周期
+        T_mult: CosineAnnealingWarmRestarts的周期倍数
+        exp_gamma: ExponentialLR的衰减因子
+        milestones: MultiStepLR的里程碑列表
+
+    Returns:
+        学习率调度器对象，如果scheduler_type为"None"则返回None
+    """
+    scheduler = None
+    if scheduler_type != "None":
+        if scheduler_type == "StepLR":
+            # StepLR: 每隔固定轮数降低学习率（PyTorch自带）
+            scheduler = lr_scheduler.StepLR(
+                optimizer, step_size=step_size, gamma=gamma
+            )
+        elif scheduler_type == "CosineAnnealingLR":
+            # CosineAnnealingLR: 余弦退火学习率（PyTorch自带）
+            scheduler = lr_scheduler.CosineAnnealingLR(
+                optimizer, T_max=T_max, eta_min=scheduler_min_lr
+            )
+        elif scheduler_type == "CosineAnnealingWarmRestarts":
+            # CosineAnnealingWarmRestarts: 带热重启的余弦退火学习率（PyTorch自带）
+            scheduler = lr_scheduler.CosineAnnealingWarmRestarts(
+                optimizer, T_0=T_0, T_mult=T_mult, eta_min=scheduler_min_lr
+            )
+        elif scheduler_type == "ExponentialLR":
+            # ExponentialLR: 指数衰减学习率（PyTorch自带）
+            scheduler = lr_scheduler.ExponentialLR(optimizer, gamma=exp_gamma)
+        elif scheduler_type == "MultiStepLR":
+            # MultiStepLR: 在指定里程碑降低学习率（PyTorch自带）
+            if milestones is None:
+                milestones = [300, 600, 800]  # 默认里程碑
+            scheduler = lr_scheduler.MultiStepLR(
+                optimizer, milestones=milestones, gamma=gamma
+            )
+        else:
+            print(
+                f"警告: 未知的调度器类型 {scheduler_type}，请使用: StepLR, CosineAnnealingLR, CosineAnnealingWarmRestarts, ExponentialLR, MultiStepLR"
+            )
+    return scheduler
+
+
+def print_hyperparameters(
+    num_epochs,
+    learning_rate,
+    dropout_rate,
+    optimizer_type,
+    momentum,
+    weight_decay,
+    nesterov,
+    adam_beta1,
+    adam_beta2,
+    adam_eps,
+    loss_type,
+    focal_alpha,
+    focal_gamma,
+    weight_strategy,
+    smoothing,
+    scheduler_type,
+    scheduler_min_lr,
+    step_size,
+    gamma,
+    T_max,
+    T_0,
+    T_mult,
+    exp_gamma,
+    milestones,
+    val_split_rate,
+    test_split_rate,
+):
+    """
+    打印详细的超参数信息
+
+    Args:
+        num_epochs: 训练轮数
+        learning_rate: 学习率
+        dropout_rate: Dropout率
+        optimizer_type: 优化器类型
+        momentum: 动量因子
+        weight_decay: 权重衰减
+        nesterov: 是否使用Nesterov动量
+        adam_beta1: Adam的beta1参数
+        adam_beta2: Adam的beta2参数
+        adam_eps: Adam的epsilon参数
+        loss_type: 损失函数类型
+        focal_alpha: Focal Loss的alpha参数
+        focal_gamma: Focal Loss的gamma参数
+        scheduler_type: 学习率调度器类型
+        scheduler_min_lr: 最小学习率
+        step_size: StepLR的步长
+        gamma: StepLR和MultiStepLR的衰减因子
+        T_max: CosineAnnealingLR的周期
+        T_0: CosineAnnealingWarmRestarts的初始周期
+        T_mult: CosineAnnealingWarmRestarts的周期倍数
+        exp_gamma: ExponentialLR的衰减因子
+        milestones: MultiStepLR的里程碑列表
+        val_split_rate: 验证集比例
+        test_split_rate: 测试集比例
+    """
+    print("=" * 120)
+    print("超参数设置:")
+    print("=" * 120)
+    
+    # 基本超参数
+    print(f"训练轮数: {num_epochs}")
+    print(f"学习率: {learning_rate}")
+    print(f"Dropout率: {dropout_rate}")
+    print(f"验证集比例: {val_split_rate}")
+    print(f"测试集比例: {test_split_rate}")
+    print()
+    
+    # 优化器参数
+    print(f"优化器类型: {optimizer_type}")
+    if optimizer_type == "SGD":
+        print(f"  动量: {momentum}")
+        print(f"  权重衰减: {weight_decay}")
+        print(f"  Nesterov: {nesterov}")
+    elif optimizer_type in ["Adam", "AdamW"]:
+        print(f"  Beta1: {adam_beta1}")
+        print(f"  Beta2: {adam_beta2}")
+        print(f"  Epsilon: {adam_eps}")
+        print(f"  权重衰减: {weight_decay}")
+    elif optimizer_type == "RMSprop":
+        print(f"  动量: {momentum}")
+        print(f"  权重衰减: {weight_decay}")
+    elif optimizer_type == "Adagrad":
+        print(f"  权重衰减: {weight_decay}")
+        print(f"  Epsilon: {adam_eps}")
+    print()
+    
+    # 损失函数参数
+    print(f"损失函数类型: {loss_type}")
+    if loss_type == "FocalLoss":
+        print(f"  Alpha: {focal_alpha}")
+        print(f"  Gamma: {focal_gamma}")
+    print()
+    
+    # 类别权重参数
+    print(f"类别权重策略: {weight_strategy}")
+    if weight_strategy == "smooth_inverse":
+        print(f"  平滑参数: {smoothing}")
+    print()
+    
+    # 学习率调度器参数
+    print(f"学习率调度器类型: {scheduler_type}")
+    if scheduler_type != "None":
+        if scheduler_type == "StepLR":
+            print(f"  步长: {step_size}")
+            print(f"  衰减因子: {gamma}")
+        elif scheduler_type == "CosineAnnealingLR":
+            print(f"  周期 (T_max): {T_max}")
+            print(f"  最小学习率: {scheduler_min_lr}")
+        elif scheduler_type == "CosineAnnealingWarmRestarts":
+            print(f"  初始周期 (T_0): {T_0}")
+            print(f"  周期倍数 (T_mult): {T_mult}")
+            print(f"  最小学习率: {scheduler_min_lr}")
+        elif scheduler_type == "ExponentialLR":
+            print(f"  衰减因子: {exp_gamma}")
+        elif scheduler_type == "MultiStepLR":
+            print(f"  里程碑: {milestones}")
+            print(f"  衰减因子: {gamma}")
+        # 对于需要最小学习率的调度器，如果还没打印则打印
+        if scheduler_type in ["StepLR", "ExponentialLR", "MultiStepLR"]:
+            print(f"  最小学习率: {scheduler_min_lr}")
+    else:
+        print("  未使用学习率调度器")
+    print()
+    print("=" * 120)

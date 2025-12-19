@@ -7,16 +7,18 @@ from .model import MambaHSINet
 from .s6_core import S6Core
 from .spatial_branch import SpatialBranchModule
 from .spectral_branch import SpectralBranchModule
-from .bidirectional_mamba import BidirectionalMamba
 from .classifier import Classifier
 from .fusion_module import FusionModule
+from .preprocess_module import PreprocessModule
+from .mamba_global_module import MambaGlobalModule
 
 __all__ = [
     "MambaHSINet",
     "S6Core",
     "SpatialBranchModule",
     "SpectralBranchModule",
-    "BidirectionalMamba",
     "Classifier",
     "FusionModule",
+    "PreprocessModule",
+    "MambaGlobalModule",
 ]

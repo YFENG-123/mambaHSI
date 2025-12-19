@@ -5,17 +5,21 @@ import torch.nn.functional as F
 
 """
 模型版本: V4.6
-说明: 光谱分支模块 — 多尺度 Conv1d + Attention Pooling 实现（恢复至 V4.6）。
+说明: 光谱分支模块 — 多尺度 Conv1d + Attention Pooling 实现（恢复至V4.6稳定版本）。
 """
 
 
 class SpectralBranchModule(nn.Module):
-    """光谱分支模块：Spectral Smoothing + Multi-Scale CNN + Attention Pooling (V4.6)
+    """光谱分支模块：Spectral Smoothing + Multi-Scale CNN + SE Attention (V4.6 Stable)
 
     说明：
     - 在多尺度特征提取之前进行谱轴平滑，降低高频噪声影响。
     - 使用 3 路并行 Conv1d（kernel=3,5,7）提取多尺度光谱特征。
     - 通过可学习的注意力加权（pixel-wise attention pooling）对每一路做加权求和，最后拼接并投影到输出通道。
+    - **标准SE注意力** (V4.6 Stable)：
+      - 使用2层SE注意力（稳定版本）
+      - 标准SE注意力：out = out * attn
+      - 保持训练稳定性，避免过度复杂化
     """
 
     def __init__(self, in_channels, out_channels, dropout_rate=0.5):
@@ -23,7 +27,7 @@ class SpectralBranchModule(nn.Module):
 
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.feat_channels = 16
+        self.feat_channels = 20  # 增强特征提取能力（V4.7）：从16增加到20，提升模型容量
 
         # 1. Spectral Smoothing Layer（谱轴预平滑）
         self.smoothing = nn.Sequential(
@@ -63,11 +67,13 @@ class SpectralBranchModule(nn.Module):
             nn.Dropout(dropout_rate),
         )
 
-        # SE 注意力（轻量）
+        # SE 注意力（标准版 - V4.6 Stable）
+        # 2层结构，保持训练稳定性
+        se_dim = max(4, out_channels // 8)
         self.se = nn.Sequential(
-            nn.Linear(out_channels, max(4, out_channels // 8), bias=False),
+            nn.Linear(out_channels, se_dim, bias=False),
             nn.ReLU(inplace=True),
-            nn.Linear(max(4, out_channels // 8), out_channels, bias=False),
+            nn.Linear(se_dim, out_channels, bias=False),
             nn.Sigmoid(),
         )
 
@@ -94,9 +100,9 @@ class SpectralBranchModule(nn.Module):
         p5 = torch.sum(b5 * w5, dim=-1)
         p7 = torch.sum(b7 * w7, dim=-1)
 
-        feat = torch.cat([p3, p5, p7], dim=1)  # (N, 48)
+        feat = torch.cat([p3, p5, p7], dim=1)  # (N, 60) = 20*3
 
-        # 投影与 SE
+        # 投影与SE注意力
         out = self.fc(feat)
         attn = self.se(out)
         out = out * attn

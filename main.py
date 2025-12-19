@@ -1,9 +1,6 @@
 import os
 import time
 import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.optim import lr_scheduler
 from models import MambaHSINet
 from util import (
     load_data,
@@ -13,8 +10,11 @@ from util import (
     generate_picture,
     set_seed,
     write_results_to_txt,
-    FocalLoss,
     init_results_file,
+    create_criterion,
+    create_optimizer,
+    create_scheduler,
+    print_hyperparameters,
 )
 from log import Log
 
@@ -23,8 +23,18 @@ program_start_time = time.time()
 
 ################################# 设置超参数 #################################
 num_epochs = 1000  # 训练轮数
-learning_rate = 1e-2  # 适配 Pre-Norm Residual 结构
-dropout_rate = 0.3
+learning_rate = 4e-3  # 优化学习率，平衡收敛速度和稳定性（V4.5 Stable）
+dropout_rate = 0.3  # 回退到0.3，避免欠拟合（V4.4 Enhanced）
+
+################################# 损失函数参数 ##################################
+loss_type = "CrossEntropyLoss"  # 损失函数类型: "FocalLoss", "CrossEntropyLoss"#
+# 损失函数参数
+focal_alpha = 1.0  # Focal Loss的alpha参数（平衡因子，可以是标量或每个类别的权重）
+focal_gamma = 2.0  # Focal Loss的gamma参数（聚焦参数，控制难易样本的权重）
+
+################################# 类别权重参数 ##################################
+weight_strategy = "inverse_frequency"  # 类别权重计算策略: "inverse_frequency", "balanced", "sqrt_inverse", "smooth_inverse", "effective_num"
+smoothing = 1.0  # 平滑参数，用于"smooth_inverse"策略
 
 ################################# 优化器参数 ##################################
 optimizer_type = "Adam"  # 优化器类型: "SGD", "Adam", "AdamW", "RMSprop", "Adagrad"
@@ -37,20 +47,9 @@ adam_beta1 = 0.9  # Adam的beta1参数
 adam_beta2 = 0.999  # Adam的beta2参数
 adam_eps = 1e-8  # Adam的epsilon参数
 
-################################# 损失函数参数 ##################################
-use_focal_loss = (
-    True  # 是否使用Focal Loss（True使用Focal Loss，False使用CrossEntropyLoss）
-)
-focal_alpha = 1.0  # Focal Loss的alpha参数（平衡因子，可以是标量或每个类别的权重）
-focal_gamma = 2.0  # Focal Loss的gamma参数（聚焦参数，控制难易样本的权重）
-
 ################################# 学习率调度器参数 ##################################
-use_scheduler = False  # 是否使用学习率调度器（已启用，有助于收敛和防止过拟合）
-scheduler_type = "ReduceLROnPlateau"  # 调度器类型: "ReduceLROnPlateau", "StepLR", "CosineAnnealingLR", "CosineAnnealingWarmRestarts", "ExponentialLR", "MultiStepLR"
-# ReduceLROnPlateau 参数（根据验证损失自动调整）
-scheduler_patience = 70  # 验证损失不下降的等待轮数
-scheduler_factor = 0.80  # 学习率衰减因子
-scheduler_min_lr = 5e-5  # 最小学习率
+scheduler_type = "None"  # 回退到不使用学习率调度器，恢复稳定训练（V4.4 Reverted）
+scheduler_min_lr = 1e-4  # 最小学习率
 # StepLR 参数（每隔固定轮数降低学习率）
 step_size = 100  # 每多少轮降低一次学习率
 gamma = 0.5  # 学习率衰减因子
@@ -101,16 +100,34 @@ val_split_rate = 0.1
 test_split_rate = 0.8
 
 ################################# 打印超参数 ##################################
-print(f"训练轮数:{num_epochs}\t\t学习率:{learning_rate}\t\tDropout率:{dropout_rate}")
-print(
-    f"优化器类型:{optimizer_type}\t\t验证集比例:{val_split_rate}\t\t测试集比例:{test_split_rate}"
+print_hyperparameters(
+    num_epochs=num_epochs,
+    learning_rate=learning_rate,
+    dropout_rate=dropout_rate,
+    optimizer_type=optimizer_type,
+    momentum=momentum,
+    weight_decay=weight_decay,
+    nesterov=nesterov,
+    adam_beta1=adam_beta1,
+    adam_beta2=adam_beta2,
+    adam_eps=adam_eps,
+    loss_type=loss_type,
+    focal_alpha=focal_alpha,
+    focal_gamma=focal_gamma,
+    weight_strategy=weight_strategy,
+    smoothing=smoothing,
+    scheduler_type=scheduler_type,
+    scheduler_min_lr=scheduler_min_lr,
+    step_size=step_size,
+    gamma=gamma,
+    T_max=T_max,
+    T_0=T_0,
+    T_mult=T_mult,
+    exp_gamma=exp_gamma,
+    milestones=milestones,
+    val_split_rate=val_split_rate,
+    test_split_rate=test_split_rate,
 )
-if use_focal_loss:
-    print(f"损失函数:Focal Loss\t\talpha={focal_alpha}\t\tgamma={focal_gamma}")
-else:
-    print("损失函数:CrossEntropyLoss")
-if use_scheduler:
-    print(f"学习率调度器:{scheduler_type}\t\t启用动态学习率")
 
 ################################# 创建结果目录结构 ##################################
 timestamp = time.strftime("%Y%m%d-%H%M%S")
@@ -126,38 +143,35 @@ os.makedirs(images_base_dir, exist_ok=True)
 print(f"图像文件目录: {images_base_dir}")
 
 results_txt_path = os.path.join(results_base_dir, f"results_{timestamp}.txt")
-config_for_results = {
-    "timestamp": timestamp,
-    "num_epochs": num_epochs,
-    "learning_rate": learning_rate,
-    "dropout_rate": dropout_rate,
-    "optimizer_type": optimizer_type,
-    "momentum": momentum,
-    "weight_decay": weight_decay,
-    "nesterov": nesterov,
-    "adam_beta1": adam_beta1,
-    "adam_beta2": adam_beta2,
-    "adam_eps": adam_eps,
-    "val_split_rate": val_split_rate,
-    "test_split_rate": test_split_rate,
-    "use_focal_loss": use_focal_loss,
-    "focal_alpha": focal_alpha,
-    "focal_gamma": focal_gamma,
-    "seeds": seeds,
-    "use_scheduler": use_scheduler,
-    "scheduler_type": scheduler_type,
-    "scheduler_patience": scheduler_patience,
-    "scheduler_factor": scheduler_factor,
-    "scheduler_min_lr": scheduler_min_lr,
-    "step_size": step_size,
-    "gamma": gamma,
-    "T_max": T_max,
-    "T_0": T_0,
-    "T_mult": T_mult,
-    "exp_gamma": exp_gamma,
-    "milestones": milestones,
-}
-init_results_file(results_txt_path, config_for_results)
+init_results_file(
+    results_txt_path=results_txt_path,
+    timestamp=timestamp,
+    num_epochs=num_epochs,
+    learning_rate=learning_rate,
+    dropout_rate=dropout_rate,
+    optimizer_type=optimizer_type,
+    momentum=momentum,
+    weight_decay=weight_decay,
+    nesterov=nesterov,
+    adam_beta1=adam_beta1,
+    adam_beta2=adam_beta2,
+    adam_eps=adam_eps,
+    val_split_rate=val_split_rate,
+    test_split_rate=test_split_rate,
+    loss_type=loss_type,
+    focal_alpha=focal_alpha,
+    focal_gamma=focal_gamma,
+    seeds=seeds,
+    scheduler_type=scheduler_type,
+    scheduler_min_lr=scheduler_min_lr,
+    step_size=step_size,
+    gamma=gamma,
+    T_max=T_max,
+    T_0=T_0,
+    T_mult=T_mult,
+    exp_gamma=exp_gamma,
+    milestones=milestones,
+)
 print(f"结果记录文件: {results_txt_path}")
 
 log_base_dir = os.path.join(results_base_dir, "logs")
@@ -195,6 +209,8 @@ for image_path, gt_path in zip(image_paths, gt_paths):
             gt_path=gt_path,
             val_split_rate=val_split_rate,
             test_split_rate=test_split_rate,
+            weight_strategy=weight_strategy,
+            smoothing=smoothing,
         )
         ############################### 每个种子重新随机初始化模型参数 ##################################
         model = MambaHSINet(
@@ -205,118 +221,38 @@ for image_path, gt_path in zip(image_paths, gt_paths):
             dropout_rate=dropout_rate,
         ).to("cuda")
         ################################# 创建损失函数 ##################################
-        if use_focal_loss:
-            # 使用每类权重作为Focal Loss的alpha，能让损失函数更关注少数类
-            try:
-                criterion = FocalLoss(
-                    alpha=class_weights.to("cuda")
-                    if torch.cuda.is_available()
-                    else class_weights,
-                    gamma=focal_gamma,
-                )
-            except Exception:
-                criterion = FocalLoss(alpha=focal_alpha, gamma=focal_gamma)
-            print(f"使用Focal Loss（alpha=class_weights） gamma={focal_gamma}")
-        else:
-            # 使用训练集中统计得到的类别权重，减轻少数类样本稀疏带来的影响
-            try:
-                criterion = nn.CrossEntropyLoss(weight=class_weights.to("cuda"))
-            except Exception:
-                # 如果无法将权重放到CUDA（例如没有GPU），则使用CPU权重
-                criterion = nn.CrossEntropyLoss(weight=class_weights)
-            print("使用CrossEntropyLoss")
+        criterion = create_criterion(
+            loss_type=loss_type,
+            class_weights=class_weights,
+            focal_alpha=focal_alpha,
+            focal_gamma=focal_gamma,
+        )
         ################################# 创建优化器 ##################################
-        if optimizer_type == "SGD":
-            # SGD: 随机梯度下降优化器
-            optimizer = optim.SGD(
-                model.parameters(),
-                lr=learning_rate,
-                momentum=momentum,
-                weight_decay=weight_decay,
-                nesterov=nesterov,
-            )
-        elif optimizer_type == "Adam":
-            # Adam: 自适应矩估计优化器
-            optimizer = optim.Adam(
-                model.parameters(),
-                lr=learning_rate,
-                betas=(adam_beta1, adam_beta2),
-                eps=adam_eps,
-                weight_decay=weight_decay,
-            )
-        elif optimizer_type == "AdamW":
-            # AdamW: 带权重衰减的Adam优化器
-            optimizer = optim.AdamW(
-                model.parameters(),
-                lr=learning_rate,
-                betas=(adam_beta1, adam_beta2),
-                eps=adam_eps,
-                weight_decay=weight_decay,
-            )
-        elif optimizer_type == "RMSprop":
-            # RMSprop: 均方根传播优化器
-            optimizer = optim.RMSprop(
-                model.parameters(),
-                lr=learning_rate,
-                momentum=momentum,
-                weight_decay=weight_decay,
-            )
-        elif optimizer_type == "Adagrad":
-            # Adagrad: 自适应梯度优化器
-            optimizer = optim.Adagrad(
-                model.parameters(),
-                lr=learning_rate,
-                weight_decay=weight_decay,
-                eps=adam_eps,
-            )
-        else:
-            # 默认使用SGD
-            print(f"警告: 未知的优化器类型 {optimizer_type}，使用默认SGD")
-            optimizer = optim.SGD(
-                model.parameters(),
-                lr=learning_rate,
-                momentum=momentum,
-                weight_decay=weight_decay,
-            )
+        optimizer = create_optimizer(
+            model=model,
+            optimizer_type=optimizer_type,
+            learning_rate=learning_rate,
+            momentum=momentum,
+            weight_decay=weight_decay,
+            nesterov=nesterov,
+            adam_beta1=adam_beta1,
+            adam_beta2=adam_beta2,
+            adam_eps=adam_eps,
+        )
         ################################# 创建学习率调度器（使用PyTorch自带的lr_scheduler）##################################
-        scheduler = None
-        if use_scheduler:
-            if scheduler_type == "ReduceLROnPlateau" and val_split_rate > 0:
-                # ReduceLROnPlateau: 根据验证损失自动调整学习率（PyTorch自带）
-                scheduler = lr_scheduler.ReduceLROnPlateau(
-                    optimizer,
-                    mode="min",
-                    factor=scheduler_factor,
-                    patience=scheduler_patience,
-                    min_lr=scheduler_min_lr,
-                )
-            elif scheduler_type == "StepLR":
-                # StepLR: 每隔固定轮数降低学习率（PyTorch自带）
-                scheduler = lr_scheduler.StepLR(
-                    optimizer, step_size=step_size, gamma=gamma
-                )
-            elif scheduler_type == "CosineAnnealingLR":
-                # CosineAnnealingLR: 余弦退火学习率（PyTorch自带）
-                scheduler = lr_scheduler.CosineAnnealingLR(
-                    optimizer, T_max=T_max, eta_min=scheduler_min_lr
-                )
-            elif scheduler_type == "CosineAnnealingWarmRestarts":
-                # CosineAnnealingWarmRestarts: 带热重启的余弦退火学习率（PyTorch自带）
-                scheduler = lr_scheduler.CosineAnnealingWarmRestarts(
-                    optimizer, T_0=T_0, T_mult=T_mult, eta_min=scheduler_min_lr
-                )
-            elif scheduler_type == "ExponentialLR":
-                # ExponentialLR: 指数衰减学习率（PyTorch自带）
-                scheduler = lr_scheduler.ExponentialLR(optimizer, gamma=exp_gamma)
-            elif scheduler_type == "MultiStepLR":
-                # MultiStepLR: 在指定里程碑降低学习率（PyTorch自带）
-                scheduler = lr_scheduler.MultiStepLR(
-                    optimizer, milestones=milestones, gamma=gamma
-                )
-            else:
-                print(
-                    f"警告: 未知的调度器类型 {scheduler_type}，请使用: ReduceLROnPlateau, StepLR, CosineAnnealingLR, CosineAnnealingWarmRestarts, ExponentialLR, MultiStepLR"
-                )
+        scheduler = create_scheduler(
+            optimizer=optimizer,
+            scheduler_type=scheduler_type,
+            val_split_rate=val_split_rate,
+            scheduler_min_lr=scheduler_min_lr,
+            step_size=step_size,
+            gamma=gamma,
+            T_max=T_max,
+            T_0=T_0,
+            T_mult=T_mult,
+            exp_gamma=exp_gamma,
+            milestones=milestones,
+        )
         ################################# 开始一个种子的训练和验证 ##################################
         best_loss = float("inf")
         best_acc = 0.0
@@ -349,14 +285,15 @@ for image_path, gt_path in zip(image_paths, gt_paths):
             print(  # 打印训练集结果
                 f"    Train -> Loss: {avg_train_loss:.4f}, Accuracy: {train_acc:.2f}%, Time: {train_time:.2f}s"
             )
-            ############################### 每个epoch的验证阶段 ##################################
+            ############################### 更新学习率 ##################################
+            if scheduler is not None:
+                scheduler.step()  # 根据epoch更新学习率
+                current_lr = optimizer.param_groups[0]["lr"]
+                print(f"    当前学习率: {current_lr:.6f}")
+            ############################### 如果没有验证集，则跳过验证阶段 ##################################
             if val_split_rate <= 0:
-                # 如果没有验证集，在训练后更新学习率（适用于StepLR和CosineAnnealingLR）
-                if scheduler is not None and scheduler_type != "ReduceLROnPlateau":
-                    scheduler.step()
-                    current_lr = optimizer.param_groups[0]["lr"]
-                    print(f"    当前学习率: {current_lr:.6f}")
                 continue
+            ############################### 每个epoch的验证阶段 ##################################
             (
                 avg_val_loss,
                 val_acc,
@@ -377,17 +314,6 @@ for image_path, gt_path in zip(image_paths, gt_paths):
             print(  # 打印验证集结果
                 f"    Val   -> Loss: {avg_val_loss:.4f}, Accuracy: {val_acc:.2f}%, Time: {val_time:.2f}s"
             )
-            ############################### 更新学习率 ##################################
-            if scheduler is not None:
-                if scheduler_type == "ReduceLROnPlateau":
-                    if val_split_rate > 0:
-                        scheduler.step(
-                            avg_val_loss
-                        )  # 根据验证损失更新学习率（使用float）
-                else:
-                    scheduler.step()  # 根据epoch更新学习率
-                current_lr = optimizer.param_groups[0]["lr"]
-                print(f"    当前学习率: {current_lr:.6f}")
             ############################### 每个epoch保存当前最佳模型 ##################################
             # 确定当前指标
             if val_split_rate > 0:
