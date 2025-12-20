@@ -1,9 +1,15 @@
+import torch
 import torch.nn as nn
 
 
 class Classifier(nn.Module):
     """
-    分类器模块
+    分类器模块 - Enhanced Stable Version (V4.23)
+    
+    改进：
+    - 保持单层隐藏层结构，避免过度复杂化
+    - 添加可学习权重的残差连接：平衡残差连接的影响，提升整体稳定性
+    - 使用更稳定的归一化：提升训练稳定性
     
     结构：
     - Linear(d_model -> classifier_hidden)
@@ -11,6 +17,7 @@ class Classifier(nn.Module):
     - GELU
     - Dropout
     - Linear(classifier_hidden -> num_classes)
+    - 可学习权重的残差连接：output = output + alpha * input_projection
     """
     
     def __init__(
@@ -28,6 +35,16 @@ class Classifier(nn.Module):
             dropout_rate: Dropout比率
         """
         super().__init__()
+        self.d_model = d_model
+        self.classifier_hidden = classifier_hidden
+        
+        # 输入投影层（用于残差连接）
+        self.input_proj = nn.Linear(d_model, num_classes, bias=False)
+        
+        # 可学习的残差连接权重（初始化为0.1，让模型逐步学习）
+        self.alpha = nn.Parameter(torch.tensor(0.1))
+        
+        # 主分类器路径
         self.classifier = nn.Sequential(
             nn.Linear(d_model, classifier_hidden, bias=True),
             nn.LayerNorm(classifier_hidden),
@@ -43,5 +60,12 @@ class Classifier(nn.Module):
         Returns:
             分类结果 (..., num_classes) 或 (H*W, num_classes)
         """
-        return self.classifier(x)
+        # 主分类器路径
+        output = self.classifier(x)
+        
+        # 可学习权重的残差连接：平衡残差连接的影响，提升整体稳定性
+        residual = self.input_proj(x)
+        output = output + self.alpha * residual
+        
+        return output
 

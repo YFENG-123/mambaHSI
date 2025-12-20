@@ -1,3 +1,4 @@
+import torch
 from torch.utils.tensorboard import SummaryWriter
 
 
@@ -18,6 +19,29 @@ class Log:
         self.timestamp = timestamp
         self.writer = SummaryWriter(log_dir=log_base_dir)
 
+
+    def add_model_graph(self, model, input_sample, data_name, seed_idx):
+        """
+        将模型架构添加到TensorBoard
+        
+        参数:
+            model: PyTorch模型
+            input_sample: 示例输入张量，形状为 (H, W, bands)
+            data_name: 数据集名称
+            seed_idx: 种子序号（从1开始）
+        """
+        try:
+            # 将模型设置为评估模式以记录架构
+            model.eval()
+            with torch.no_grad():
+                self.writer.add_graph(
+                    model, 
+                    input_sample,
+                    verbose=False
+                )
+            print(f"    模型架构已添加到TensorBoard: {data_name}_Seed_{seed_idx}")
+        except Exception as e:
+            print(f"    警告: 添加模型架构到TensorBoard时出错: {e}")
 
     def flush(self):
         """刷新TensorBoard writer缓存"""

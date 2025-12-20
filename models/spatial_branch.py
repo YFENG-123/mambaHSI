@@ -6,7 +6,7 @@ import torch.nn.functional as F
 
 class SKFusion(nn.Module):
     """
-    Selective Kernel Fusion (SK Fusion)
+    Selective Kernel Fusion (SK Fusion) - Enhanced Version (V4.19)
     
     目的：
     V3.8 的 Coordinate Attention 虽然引入了位置信息，但在多尺度特征融合上仍然是简单的拼接 (Concat)。
@@ -17,6 +17,11 @@ class SKFusion(nn.Module):
     - 对于小物体区域，增加 3x3 分支的权重。
     - 对于大平滑区域，增加 7x7 分支的权重。
     这种动态选择机制比静态的 Attention 更稳健，能有效解决小样本被大尺度特征淹没的问题。
+    
+    改进（V4.19）：
+    - 增强权重生成网络：增加中间层深度，提升表达能力
+    - 使用GELU替代ReLU，提升非线性表达能力
+    - 添加残差连接，保留原始特征信息，提升小样本类别稳定性
     """
     def __init__(self, channels, branches=3, reduction=16):
         super(SKFusion, self).__init__()
@@ -26,11 +31,15 @@ class SKFusion(nn.Module):
         # 1. 全局信息聚合
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         
-        # 2. 紧凑特征描述 (FC -> ReLU)
+        # 2. 增强的紧凑特征描述 (V4.19)
+        # 增加中间层深度，提升表达能力
         self.fc = nn.Sequential(
             nn.Linear(channels, d, bias=False),
-            nn.LayerNorm(d), # 使用 LayerNorm 保持梯度稳定
-            nn.ReLU(inplace=True)
+            nn.LayerNorm(d),  # 使用 LayerNorm 保持梯度稳定
+            nn.GELU(),  # 使用GELU替代ReLU，提升表达能力
+            nn.Linear(d, d, bias=False),  # 增加中间层深度
+            nn.LayerNorm(d),
+            nn.GELU(),
         )
         
         # 3. 权重生成 (FC -> Softmax)
@@ -49,7 +58,7 @@ class SKFusion(nn.Module):
         # Global Pooling
         s = self.avg_pool(U).flatten(1) # (B, C)
         
-        # Compact Descriptor
+        # Enhanced Compact Descriptor (V4.19)
         z = self.fc(s) # (B, d)
         
         # Generate Weights
@@ -60,23 +69,28 @@ class SKFusion(nn.Module):
         weights = torch.stack(weights, dim=0) # (Branches, B, C, 1, 1)
         weights = self.softmax(weights) # Normalize across branches
         
-        # Weighted Sum
+        # Weighted Sum with Residual Connection (V4.19)
+        # 添加残差连接，保留原始特征信息，提升小样本类别稳定性
         V = 0
         for i, x in enumerate(x_branches):
             V += x * weights[i]
+        
+        # 残差连接：保留原始融合特征，增强表达能力
+        V = V + U  # 添加残差连接
             
         return V
 
 
 class SpatialBranchModule(nn.Module):
     """
-    空间分支模块：High-Capacity + Selective Kernel Fusion (V3.9)
+    空间分支模块：High-Capacity + Enhanced Selective Kernel Fusion (V4.19)
     
     改进：
     1. **保持 High Capacity**：继续使用 `mid_channels = out_channels`。
-    2. **引入 SK Fusion**：替代之前的 `Concat + Conv + Attention`。
-       - V3.8 的 Attention 是“事后诸葛亮”（融合后再加权）。
-       - V3.9 的 SK Fusion 是“因地制宜”（在融合时就动态选择最佳尺度）。
+    2. **增强 SK Fusion** (V4.19)：提升小样本类别稳定性
+       - 增强权重生成网络：增加中间层深度，提升表达能力
+       - 使用GELU替代ReLU，提升非线性表达能力
+       - 添加残差连接，保留原始特征信息，提升小样本类别稳定性
        这能从根本上提升对不同尺度物体（特别是 Class 7/9 等小目标）的适应能力，消除种子间的方差。
     """
     def __init__(self, in_channels, out_channels, dropout_rate=0.5):
