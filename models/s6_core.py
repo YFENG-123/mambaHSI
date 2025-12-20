@@ -79,11 +79,6 @@ class S6Core(nn.Module):
         """
         batch, seq_len, d_inner = x.shape
 
-        # 确保输入维度与d_model匹配
-        assert d_inner == self.d_model, (
-            f"Input dimension {d_inner} must match d_model {self.d_model}"
-        )
-
         # selective_scan_fn期望的格式是 (batch, dim, seq_len)，需要转置
         # 将 (batch, seq_len, d_model) 转换为 (batch, d_model, seq_len)
         x_t = x.transpose(1, 2).contiguous()  # (batch, d_model, seq_len)
