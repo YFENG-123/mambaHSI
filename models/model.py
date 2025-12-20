@@ -33,8 +33,8 @@ class MambaHSINet(nn.Module):
         num_classes=17,
         bands=200,
         dropout_rate=0.5,
-        d_model=64,
-        classifier_hidden=64,
+        d_model=32,  # 从64减少到32以降低内存占用（减少50%）
+        classifier_hidden=32,  # 从64减少到32以降低内存占用
     ):
         super().__init__()
         self.bands = bands

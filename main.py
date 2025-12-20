@@ -79,9 +79,9 @@ seeds = [
 image_paths = [
     # "data/HuaiLai.mat",
     # "data/Botswana.mat",
-    "data/Indian_pines.mat",
+    #"data/Indian_pines.mat",
     # "data/KSC.mat",
-    # "data/Pavia.mat",
+     "data/Pavia.mat",
     # "data/PaviaU.mat",
     # "data/Salinas.mat",
     # "data/SalinasA.mat",
@@ -89,9 +89,9 @@ image_paths = [
 gt_paths = [
     # "data/HuaiLai_gt.mat",
     # "data/Botswana_gt.mat",
-    "data/Indian_pines_gt.mat",
+    #"data/Indian_pines_gt.mat",
     # "data/KSC_gt.mat",
-    # "data/Pavia_gt.mat",
+     "data/Pavia_gt.mat",
     # "data/PaviaU_gt.mat",
     # "data/Salinas_gt.mat",
     # "data/SalinasA_gt.mat",

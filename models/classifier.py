@@ -38,13 +38,7 @@ class Classifier(nn.Module):
         self.d_model = d_model
         self.classifier_hidden = classifier_hidden
         
-        # 输入投影层（用于残差连接）
-        self.input_proj = nn.Linear(d_model, num_classes, bias=False)
-        
-        # 可学习的残差连接权重（初始化为0.1，让模型逐步学习）
-        self.alpha = nn.Parameter(torch.tensor(0.1))
-        
-        # 主分类器路径
+        # 精简分类器（移除残差连接以降低内存占用）
         self.classifier = nn.Sequential(
             nn.Linear(d_model, classifier_hidden, bias=True),
             nn.LayerNorm(classifier_hidden),
@@ -60,12 +54,8 @@ class Classifier(nn.Module):
         Returns:
             分类结果 (..., num_classes) 或 (H*W, num_classes)
         """
-        # 主分类器路径
+        # 精简分类器（移除残差连接）
         output = self.classifier(x)
-        
-        # 可学习权重的残差连接：平衡残差连接的影响，提升整体稳定性
-        residual = self.input_proj(x)
-        output = output + self.alpha * residual
         
         return output
 
