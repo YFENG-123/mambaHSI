@@ -1,3 +1,19 @@
+"""
+mambaHSI 工具模块
+
+该模块包含训练与评估高光谱图像分类任务时常用的工具函数，包括：
+- 数据加载与 DataLoader 构建（`load_data`）
+- 单个 epoch 的训练/验证/测试流程（`run_model`, `step`）
+- 指标计算（OA/AA/Kappa）与实验结果汇总（`calculate_seed_result`, `calculate_dataset_result`）
+- 结果可视化（`generate_picture`）与文本记录（`init_results_file_header`, `write_results_to_txt`）
+- 损失/优化器/学习率调度器的构建助手（`create_criterion`, `create_optimizer`, `create_scheduler`）
+- 固定随机种子以保证可复现性（`set_seed`）
+
+说明与约定：
+- 本模块中关于张量/数组形状与设备的约定在各函数的 docstring 中有说明，请在调用处留意输入的形状和 dtype。
+- 为保证实验可复现，`DataLoader` 的随机种子和多进程设置在 `load_data` 中已明确处理。
+"""
+
 import os
 import time
 import random
@@ -202,23 +218,28 @@ def load_data(
     )
 
 
-def run_model(model, loader, criterion, optimizer, mode):
+def run_model(model, loader, criterion, optimizer, mode, scheduler=None):
+    """
+    运行一个 epoch 的模型（train/val/test）。
+    如果 mode == "train" 且传入了 scheduler，则在 epoch 结束时执行 scheduler.step() 并返回更新后的学习率。
+    无论何种模式，返回结果的最后一项均为当前 learning rate（float）。
+    """
     if mode == "train":
         model.train()
-        return step(model, loader, criterion, optimizer, mode)
+        return step(model, loader, criterion, optimizer, mode, scheduler)
     elif mode == "val":
         model.eval()
         with torch.no_grad():
-            return step(model, loader, criterion, optimizer, mode)
+            return step(model, loader, criterion, optimizer, mode, scheduler)
     elif mode == "test":
         model.eval()
         with torch.no_grad():
-            return step(model, loader, criterion, optimizer, mode)
+            return step(model, loader, criterion, optimizer, mode, scheduler)
     else:
         raise ValueError(f"Invalid mode: {mode}")
 
 
-def step(model, loader, criterion, optimizer, mode):
+def step(model, loader, criterion, optimizer, mode, scheduler=None):
     start_time = time.time()
     total_loss = 0.0
     correct_label = 0
@@ -256,6 +277,8 @@ def step(model, loader, criterion, optimizer, mode):
             # 梯度裁剪：防止梯度爆炸，提高训练稳定性
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
+            if scheduler is not None:
+                scheduler.step()
 
         # 计算准确率
         _, predicted = outputs_masked.max(1)
@@ -276,6 +299,10 @@ def step(model, loader, criterion, optimizer, mode):
 
     end_time = time.time()
     elapsed_time = end_time - start_time
+
+    # 返回当前学习率，便于外部记录（无论是否执行了 step）
+    current_lr = optimizer.param_groups[0]["lr"]
+
     return (
         avg_loss,
         acc,
@@ -284,6 +311,7 @@ def step(model, loader, criterion, optimizer, mode):
         full_prediction_map,
         full_test_label,
         elapsed_time,
+        current_lr,
     )
 
 

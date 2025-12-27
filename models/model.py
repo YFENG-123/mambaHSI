@@ -1,8 +1,31 @@
+"""
+models.model
+
+定义高光谱图像分类网络 `MambaHSINet`，采用光谱分支 + 空间分支 的双分支架构，
+并在特征融合后引入 Mamba 层（双向 S6Core 封装）以增强空间-光谱上下文建模能力。
+
+主要组成：
+- 预处理（LayerNorm）用于对谱带通道进行归一化
+- 光谱分支（`SpectralBranchModule`）：对光谱信息做逐像素的全连接投影
+- 空间分支（`SpatialBranchModule`）：对局部空间邻域做多尺度卷积提取
+- 特征融合（1x1 Conv）将两个分支的特征压缩为 d_model
+- Mamba 层（`MambaLayer`）进行序列级别的长范围依赖建模
+- 分类头（MLP）将每个像素的特征映射到类别分布
+
+输入/输出形状约定：
+- 输入 x: (H, W, bands)
+- 输出: (H, W, num_classes)
+
+注意：网络内部在不同模块间会进行 permute/reshape 以匹配 Conv2d / Linear / S6Core 的输入要求。
+"""
+
 import torch
 import torch.nn as nn
-from .s6_core import S6Core
 from .spatial_branch import SpatialBranchModule
 from .spectral_branch import SpectralBranchModule
+from .mamba_layer import MambaLayer
+from .fusion import FusionModule
+from .classifier import ClassifierModule
 
 
 class MambaHSINet(nn.Module):
@@ -35,6 +58,7 @@ class MambaHSINet(nn.Module):
         self.bands = bands
         self.image_x = image_x
         self.image_y = image_y
+        self.dropout_rate = dropout_rate
         self.d_model = d_model
 
         # 预处理层：归一化
@@ -42,31 +66,29 @@ class MambaHSINet(nn.Module):
 
         # 光谱分支：增强的线性映射 (Linear + GELU + Dropout)
         # 输入 (H, W, bands) -> 输出 (H, W, d_model)
-        self.spectral_branch = SpectralBranchModule(bands, d_model, dropout_rate)
+        self.spectral_branch = SpectralBranchModule(
+            bands, d_model, bias=False, dropout_rate=self.dropout_rate
+        )
 
         # 空间分支：多尺度卷积模块
         # 输入 (bands, H, W) -> 输出 (d_model, H, W)
-        self.spatial_branch = SpatialBranchModule(bands, d_model, dropout_rate)
+        self.spatial_branch = SpatialBranchModule(
+            bands, d_model, bias=False, dropout_rate=self.dropout_rate
+        )
 
-        # 融合层：1x1卷积
+        # 融合层：封装为单独模块（1x1 卷积）
         # 输入拼接后的特征 (2*d_model, H, W) -> 输出 (d_model, H, W)
-        self.fusion_conv = nn.Conv2d(d_model * 2, d_model, kernel_size=1, bias=True)
+        self.fusion = FusionModule(
+            d_model * 2, d_model, bias=False, dropout_rate=self.dropout_rate
+        )
 
-        # 优化：双向 Mamba (关键修改：必须使用双向扫描以捕获全图上下文)
-        self.mamba_fwd = S6Core(d_model=d_model)
-        self.mamba_bwd = S6Core(d_model=d_model)
-        
-        self.mamba_norm = nn.LayerNorm(d_model)
-        self.mamba_dropout = nn.Dropout(dropout_rate)
+        # Mamba 层封装（双向 + Pre-Norm + Dropout）
+        self.mamba = MambaLayer(d_model=d_model, dropout_rate=self.dropout_rate)
 
-        # 分类器
+        # 分类器（封装为单独模块）
         classifier_hidden = 64  # 隐藏层维度
-        self.classifier = nn.Sequential(
-            nn.Linear(d_model, classifier_hidden),
-            nn.LayerNorm(classifier_hidden),
-            nn.GELU(),
-            nn.Dropout(dropout_rate),
-            nn.Linear(classifier_hidden, num_classes),
+        self.classifier = ClassifierModule(
+            d_model, classifier_hidden, num_classes, dropout_rate=self.dropout_rate
         )
 
     def forward(self, x):
@@ -98,34 +120,17 @@ class MambaHSINet(nn.Module):
 
         # 4. 1x1卷积融合
         # 转换维度: (H, W, 2*d_model) -> (1, 2*d_model, H, W)
-        x_cat_conv = x_cat.permute(2, 0, 1).unsqueeze(0)
-        x_fused = self.fusion_conv(x_cat_conv)  # (1, d_model, H, W)
+        x_fused = x_cat.permute(2, 0, 1).unsqueeze(0)
+        x_fused = self.fusion(x_fused)  # (1, d_model, H, W)
         x_fused = x_fused.squeeze(0).permute(1, 2, 0)  # (H, W, d_model)
 
-        # 5. Mamba处理 (双向 + Pre-Norm Residual)
+        # 5. Mamba处理（使用封装的 MambaLayer）
         # Reshape为序列: (H, W, d_model) -> (1, H*W, d_model)
         x_seq = x_fused.reshape(-1, self.d_model)  # (H*W, d_model)
         x_seq = x_seq.unsqueeze(0)  # (1, H*W, d_model)
 
-        # 移除显式位置编码，依赖Mamba自身的隐式位置建模能力
-
-        # Pre-Norm Residual Block (这是最稳定的深层结构)
-        residual = x_seq
-        x_norm = self.mamba_norm(x_seq)
-
-        # Bidirectional Mamba
-        # 前向流
-        x_fwd = self.mamba_fwd(x_norm)
-        
-        # 后向流 (翻转输入 -> 处理 -> 翻转输出)
-        x_bwd = self.mamba_bwd(x_norm.flip(dims=[1])).flip(dims=[1])
-        
-        # 融合: 相加
-        x_mamba = x_fwd + x_bwd
-
-        x_mamba = self.mamba_dropout(x_mamba)
-        x_mamba = x_mamba + residual
-
+        # 使用封装层处理（内部包含 Pre-Norm, 双向 S6Core, Dropout, 残差）
+        x_mamba = self.mamba(x_seq)
         x_mamba = x_mamba.squeeze(0)  # (H*W, d_model)
 
         # 6. 分类

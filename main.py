@@ -24,12 +24,14 @@ program_start_time = time.time()
 ################################# 设置超参数 #################################
 num_epochs = 1000  # 训练轮数
 learning_rate = 1e-3  # 适配 Pre-Norm Residual 结构
-dropout_rate = 0.5
+dropout_rate = 0.2
+# 仅在最后 50 个 epoch 开始保存模型；在倒数第50轮（即开始的那一轮）固定保存一次快照
+save_start_epoch = max(1, num_epochs - 50 + 1)
 ################################# 优化器参数 ##################################
 optimizer_type = "Adam"  # 优化器类型: "SGD", "Adam", "AdamW", "RMSprop", "Adagrad"
 # SGD 参数（随机梯度下降）
 momentum = 0.9  # 动量因子
-weight_decay = 1e-4  # 权重衰减（L2正则化）
+weight_decay = 1e-3  # 权重衰减（L2正则化）
 nesterov = False  # 是否使用Nesterov动量
 # Adam/AdamW 参数
 adam_beta1 = 0.9  # Adam的beta1参数
@@ -68,34 +70,34 @@ seeds = [
     80,
     443,
     445,
-    # 554,
-    # 3306,
-    # 5900,
-    # 8080,
-    # 25565,
+    554,
+    3306,
+    5900,
+    8080,
+    25565,
 ]
 image_paths = [
-    # "data/HuaiLai.mat",
-    # "data/Botswana.mat",
-    # "data/Indian_pines.mat",
-    # "data/KSC.mat",
+    "data/HuaiLai.mat",
+    "data/Botswana.mat",
+    "data/Indian_pines.mat",
+    "data/KSC.mat",
     "data/Pavia.mat",
-    # "data/PaviaU.mat",
-    # "data/Salinas.mat",
+    "data/PaviaU.mat",
+    "data/Salinas.mat",
     # "data/SalinasA.mat",
 ]
 gt_paths = [
-    # "data/HuaiLai_gt.mat",
-    # "data/Botswana_gt.mat",
-    # "data/Indian_pines_gt.mat",
-    # "data/KSC_gt.mat",
+    "data/HuaiLai_gt.mat",
+    "data/Botswana_gt.mat",
+    "data/Indian_pines_gt.mat",
+    "data/KSC_gt.mat",
     "data/Pavia_gt.mat",
-    # "data/PaviaU_gt.mat",
-    # "data/Salinas_gt.mat",
+    "data/PaviaU_gt.mat",
+    "data/Salinas_gt.mat",
     # "data/SalinasA_gt.mat",
 ]
-val_split_rate = 0.01
-test_split_rate = 0.98
+val_split_rate = 0.01  # 验证集比例固定严禁修改！！！
+test_split_rate = 0.98  # 测试集比例固定严禁修改！！！
 
 ################################# 打印超参数 ##################################
 print_experiment_config(
@@ -129,7 +131,7 @@ print_experiment_config(
     image_paths=image_paths,
     gt_paths=gt_paths,
 )
- 
+
 
 ################################# 创建结果目录结构 ##################################
 timestamp = time.strftime("%Y%m%d-%H%M%S")
@@ -275,7 +277,8 @@ for image_path, gt_path in zip(image_paths, gt_paths):
                 full_prediction_map,
                 full_test_label,
                 train_time,
-            ) = run_model(model, train_loader, criterion, optimizer, "train")
+                current_lr,
+            ) = run_model(model, train_loader, criterion, optimizer, "train", scheduler)
             logger.each_train(  # 记录每次训练的结果到TensorBoard
                 data_name,
                 seed_idx + 1,
@@ -283,25 +286,35 @@ for image_path, gt_path in zip(image_paths, gt_paths):
                 avg_train_loss,
                 train_acc,
                 train_time,
+                current_lr,
             )
             print(  # 打印训练集结果
                 f"    Train -> Loss: {avg_train_loss:.4f}, Accuracy: {train_acc:.2f}%, Time: {train_time:.2f}s"
             )
-            ############################### 在每轮训练集结束后统一更新学习率 ##################################
-            if scheduler is not None:
-                scheduler.step()
-                current_lr = optimizer.param_groups[0]["lr"]
-                print(f"    当前学习率: {current_lr:.6f}")
+            # 当前学习率在 run_model 中已更新（如提供 scheduler），并作为 current_lr 返回
+            print(f"    当前学习率: {current_lr:.6f}")
             ############################### 如果没有验证集，每个epoch的训练阶段结束后保存最佳模型 ##################################
             if val_split_rate <= 0:
-                if avg_train_loss < best_loss:
-                    best_loss = avg_train_loss
-                    best_acc = train_acc
-                    best_epoch = epoch + 1
-                    best_type = "Train"
-                    save_path = os.path.join(weights_dir, f"{seed_idx + 1}.pth")
-                    torch.save(model.state_dict(), save_path)
-                    print(f"    模型已在训练阶段结束后保存为: {save_path}")
+                current_epoch = epoch + 1
+                # 仅在最后 save_start_epoch 之后才开始保存最佳模型
+                if current_epoch >= save_start_epoch:
+                    # 在倒数第50轮（起始轮）固定保存一次快照
+                    if current_epoch == save_start_epoch:
+                        fixed_save_path = os.path.join(
+                            weights_dir,
+                            f"{seed_idx + 1}_fixed_epoch{current_epoch}.pth",
+                        )
+                        torch.save(model.state_dict(), fixed_save_path)
+                        print(f"    固定快照已保存为: {fixed_save_path}")
+
+                    if avg_train_loss < best_loss:
+                        best_loss = avg_train_loss
+                        best_acc = train_acc
+                        best_epoch = current_epoch
+                        best_type = "Train"
+                        save_path = os.path.join(weights_dir, f"{seed_idx + 1}.pth")
+                        torch.save(model.state_dict(), save_path)
+                        print(f"    模型已在训练阶段结束后保存为: {save_path}")
                 continue
             ############################### 如果有验证集，每个epoch的验证阶段 ##################################
             (
@@ -312,6 +325,7 @@ for image_path, gt_path in zip(image_paths, gt_paths):
                 full_prediction_map,
                 full_test_label,
                 val_time,
+                current_lr,
             ) = run_model(model, val_loader, criterion, optimizer, "val")
             logger.each_val(  # 记录每次验证的结果到TensorBoard
                 data_name,
@@ -325,18 +339,29 @@ for image_path, gt_path in zip(image_paths, gt_paths):
                 f"    Val   -> Loss: {avg_val_loss:.4f}, Accuracy: {val_acc:.2f}%, Time: {val_time:.2f}s"
             )
             ############################### 每个epoch保存当前最佳模型 ##################################
-            if avg_val_loss < best_loss:
-                best_loss = avg_val_loss
-                best_acc = val_acc
-                best_epoch = epoch + 1
-                best_type = "Val"
-                torch.save(
-                    model.state_dict(),
-                    os.path.join(weights_dir, f"{seed_idx + 1}.pth"),
-                )
-                print(
-                    f"Best model saved at Epoch {best_epoch} with Loss: {best_loss:.4f} Accuracy: {best_acc:.2f}%"
-                )
+            current_epoch = epoch + 1
+            # 仅在最后 save_start_epoch 之后才进行最佳模型保存
+            if current_epoch >= save_start_epoch:
+                # 在倒数第50轮（起始轮）固定保存一次快照
+                if current_epoch == save_start_epoch:
+                    fixed_save_path = os.path.join(
+                        weights_dir, f"{seed_idx + 1}_fixed_epoch{current_epoch}.pth"
+                    )
+                    torch.save(model.state_dict(), fixed_save_path)
+                    print(f"    固定快照已保存为: {fixed_save_path}")
+
+                if avg_val_loss < best_loss:
+                    best_loss = avg_val_loss
+                    best_acc = val_acc
+                    best_epoch = current_epoch
+                    best_type = "Val"
+                    torch.save(
+                        model.state_dict(),
+                        os.path.join(weights_dir, f"{seed_idx + 1}.pth"),
+                    )
+                    print(
+                        f"Best model saved at Epoch {best_epoch} with Loss: {best_loss:.4f} Accuracy: {best_acc:.2f}%"
+                    )
             ############################### 该轮训练和验证结束 ##################################
         end_time = time.time()  # 记录每个种子结束时间
         total_training_time = end_time - start_time  # 计算每个种子训练时间
@@ -365,6 +390,7 @@ for image_path, gt_path in zip(image_paths, gt_paths):
             full_prediction_map,
             full_test_label,
             test_time,
+            current_lr,
         ) = run_model(model, test_loader, criterion, optimizer, "test")
         oa, aa, kappa, confusion_matrix, class_accuracies = (  # 计算测试集结果
             calculate_seed_result(
