@@ -60,11 +60,10 @@ class S6Core(nn.Module):
         with torch.no_grad():
             self.dt_proj.bias.data = dt_bias_init
 
-        # 简化的投影层（仅用于生成B, C, dt参数）
-        # 使用与Mamba类似的投影方式，但更简化
-        # B和C需要投影到(d_state, d_model)维度
-        self.proj_B = nn.Linear(d_model, self.d_state * self.d_model, bias=False)
-        self.proj_C = nn.Linear(d_model, self.d_state * self.d_model, bias=False)
+        # 正确的投影层 - B和C直接投影到d_state维度
+        # 每个输入位置独立计算B和C参数
+        self.proj_B = nn.Linear(d_model, self.d_state, bias=False)
+        self.proj_C = nn.Linear(d_model, self.d_state, bias=False)
         self.proj_dt = nn.Linear(d_model, self.dt_rank, bias=False)
 
         # 输出投影（简化版）
@@ -84,8 +83,8 @@ class S6Core(nn.Module):
         x_t = x.transpose(1, 2).contiguous()  # (batch, d_model, seq_len)
 
         # 生成B, C, dt参数
-        B = self.proj_B(x)  # (batch, seq_len, d_state * d_model)
-        C = self.proj_C(x)  # (batch, seq_len, d_state * d_model)
+        B = self.proj_B(x)  # (batch, seq_len, d_state)
+        C = self.proj_C(x)  # (batch, seq_len, d_state)
         dt = self.proj_dt(x)  # (batch, seq_len, dt_rank)
 
         # 通过dt_proj投影并添加bias得到delta
@@ -93,16 +92,9 @@ class S6Core(nn.Module):
         delta = F.softplus(delta)  # 使用softplus激活
         delta_t = delta.transpose(1, 2).contiguous()  # (batch, d_model, seq_len)
 
-        # 重塑B, C为selective_scan_fn需要的形状
-        # 根据Mamba的实现，B和C应该是 (batch, d_state, seq_len)
-        # 但我们的投影输出是 (batch, seq_len, d_state * d_model)
-        # 我们需要重新组织为 (batch, d_state, seq_len)
-        # 为了简化，我们使用每个d_model维度共享相同的B和C
-        B = B.view(batch, seq_len, self.d_state, self.d_model)
-        C = C.view(batch, seq_len, self.d_state, self.d_model)
-        # 取第一个d_model维度，然后转置为 (batch, d_state, seq_len)
-        B = B[:, :, :, 0].transpose(1, 2).contiguous()  # (batch, d_state, seq_len)
-        C = C[:, :, :, 0].transpose(1, 2).contiguous()  # (batch, d_state, seq_len)
+        # 转置B, C为selective_scan_fn需要的形状 (batch, d_state, seq_len)
+        B = B.transpose(1, 2).contiguous()  # (batch, d_state, seq_len)
+        C = C.transpose(1, 2).contiguous()  # (batch, d_state, seq_len)
 
         # 获取A矩阵
         A = -torch.exp(self.A_log.float())  # (d_model, d_state)

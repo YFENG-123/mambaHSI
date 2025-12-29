@@ -32,8 +32,7 @@ class SpectralBranchModule(nn.Module):
         self.out_channels = out_channels
         self.bias = bias
         self.dropout_rate = dropout_rate
-        self.hidden_dim = max(32, self.in_channels // 2)
-        self.conv_channels = max(8, self.in_channels // 20)
+        self.conv_channels = max(8, self.in_channels // 24)
 
         # 对每个像素的光谱序列使用正常 1D 卷积（Conv1d(1 -> C)），然后在通道维度融合
         # 三个尺度的卷积输出中间通道数 self.conv_channels
@@ -82,7 +81,6 @@ class SpectralBranchModule(nn.Module):
         x7 = self.conv7(x_pixels)  # (H*W, C, bands)
         # 在通道维度融合（sum）后与原始信号做残差连接
         x_fused_seq = x3.sum(dim=1) + x5.sum(dim=1) + x7.sum(dim=1) + x_pixels.squeeze(1)  # (H*W, bands)
-
         x_fused_seq = self.post_fuse(x_fused_seq)
 
         # 逐像素将谱序列投影到 out_channels（保持原模块输出接口）
