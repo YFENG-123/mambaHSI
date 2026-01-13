@@ -24,7 +24,7 @@ program_start_time = time.time()
 ################################# 设置超参数 #################################
 num_epochs = 1000  # 训练轮数
 learning_rate = 1e-3  # 适配 Pre-Norm Residual 结构
-dropout_rate = 0.2
+dropout_rate = 0.1
 # 仅在最后 50 个 epoch 开始保存模型；在倒数第50轮（即开始的那一轮）固定保存一次快照
 save_start_epoch = max(1, num_epochs - 50 + 1)
 ################################# 优化器参数 ##################################

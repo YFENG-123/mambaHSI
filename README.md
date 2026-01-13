@@ -2,19 +2,42 @@ sudo apt install fonts-wqy-zenhei
 
 rm -rf ~/.cache/matplotlib
 
-通道注意力模块平均池化和最大池化融合的方式可改为卷积
+--no-build-isolation
 
-通道注意力和空间注意力模块可改为并联 
+git clone git@github.com:YFENG-123/mambaHSI.git
 
-[1]【1、切记不要频繁点击增加次数，会被系统拉黑，使用过沉重提示没有额度或者无法使用后，再点击增加次数！感谢配合！
+git clone https://github.com/state-spaces/mamba.git
 
-2：必须右键（无限续杯）助手“以管理员身份运行”打开程序>复制粘贴卡密>点击验证卡密>增加次数
+nano /root/.ssh/config
 
-3:助手下载:https://wwex.lanzout.com/b00od1r9lc密码:8kpn
+Host github.com
+  Hostname ssh.github.com
+  Port 443
 
-4:使用说明：下载助手后输入卡密激活 点击增加次数后等待重启然后打开cursor就可以使用了 禁止频繁增加额度 会被限制 用完额度后再点击增加额度就可以了
+ssh-keygen -t rsa -b 4096 -C "578851062@qq.com"
 
-5:苹果教程 https://docs.qq.com/doc/DRXFDYW5nSWpjaWFw】
-KA8NJNFRXJ92O5E8BENCT8FP5X2RFKDA
+/root/.ssh/
+
+conda create -n venv python=3.12 -y
+
+source /etc/profile
+
+conda activate venv
  
-The number of runs exceeds 500. New runs are unselected for performance reasons.
+Cuda: https://developer.nvidia.com/cuda?hl=zh-cn
+
+Torch: https://pytorch.org/get-started/locally/
+
+Conda: https://www.anaconda.com/download
+
+git config --global user.email "578851062@qq.com"
+
+git config --global user.name "YFENG-123"
+
+/usr/local/cuda-12.2/bin/cuda-uninstaller
+
+pip install causal-conv1d --no-build-isolation -V
+
+pip install . --no-build-isolation -V
+
+-i https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple

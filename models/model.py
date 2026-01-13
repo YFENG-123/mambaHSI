@@ -86,7 +86,7 @@ class MambaHSINet(nn.Module):
         self.mamba = MambaLayer(d_model=d_model, dropout_rate=self.dropout_rate)
 
         # 分类器（封装为单独模块）
-        classifier_hidden = 64  # 隐藏层维度
+        classifier_hidden = 128  # 隐藏层维度
         self.classifier = ClassifierModule(
             d_model, classifier_hidden, num_classes, dropout_rate=self.dropout_rate
         )
