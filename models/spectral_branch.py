@@ -15,6 +15,7 @@ spectral_branch 模块
 - 输出 out: (H, W, out_channels)
 """
 
+import torch
 import torch.nn as nn
 
 # 模型版本: V4.18
@@ -62,6 +63,11 @@ class SpectralBranchModule(nn.Module):
             nn.Dropout(self.dropout_rate),
         )
 
+        # 可学习的多尺度融合权重（4个分支：3x3, 5x5, 7x7, 原始信号）
+        #self.fusion_weights = nn.Parameter(torch.ones(4), requires_grad=True)
+        # 优化初始化：给予原始信号更高的权重，更好保持类别特征
+        self.fusion_weights = nn.Parameter(torch.tensor([0.8, 0.8, 0.8, 1.2]), requires_grad=True)
+
         # Linear 输入维度为谱长度 self.in_channels
         self.project_fc = nn.Sequential(
             nn.Linear(self.in_channels, self.out_channels, bias=self.bias),
@@ -79,8 +85,14 @@ class SpectralBranchModule(nn.Module):
         x3 = self.conv3(x_pixels)  # (H*W, C, bands)
         x5 = self.conv5(x_pixels)  # (H*W, C, bands)
         x7 = self.conv7(x_pixels)  # (H*W, C, bands)
-        # 在通道维度融合（sum）后与原始信号做残差连接
-        x_fused_seq = x3.sum(dim=1) + x5.sum(dim=1) + x7.sum(dim=1) + x_pixels.squeeze(1)  # (H*W, bands)
+        # 可学习的加权融合（使用softmax归一化的权重）
+        weights = torch.softmax(self.fusion_weights, dim=0)
+        x_fused_seq = (
+            weights[0] * x3.sum(dim=1) +
+            weights[1] * x5.sum(dim=1) +
+            weights[2] * x7.sum(dim=1) +
+            weights[3] * x_pixels.squeeze(1)
+        )  # (H*W, bands)
         x_fused_seq = self.post_fuse(x_fused_seq)
 
         # 逐像素将谱序列投影到 out_channels（保持原模块输出接口）

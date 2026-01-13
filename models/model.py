@@ -51,7 +51,7 @@ class MambaHSINet(nn.Module):
         image_y=145,
         num_classes=17,
         bands=200,
-        dropout_rate=0.5,
+        dropout_rate=0.3,
         d_model=64,
     ):
         super().__init__()
@@ -105,8 +105,7 @@ class MambaHSINet(nn.Module):
 
         # 2. 双分支处理
 
-        # 光谱分支 (全连接)
-        # Linear作用在最后一个维度
+        # 光谱分支
         x_spec = self.spectral_branch(x_norm)  # (H, W, d_model)
 
         # 空间分支 (多尺度卷积)

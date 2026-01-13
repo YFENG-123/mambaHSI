@@ -39,10 +39,15 @@ adam_beta2 = 0.999  # Adam的beta2参数
 adam_eps = 1e-8  # Adam的epsilon参数
 
 ################################# 损失函数参数 ##################################
-# 使用字符串选择损失函数，示例: "CrossEntropy" 或 "Focal"
-loss_type = "CrossEntropy"  # 可选: "CrossEntropy", "Focal"
-focal_alpha = 1.0  # 当 loss_type == "Focal" 时生效：alpha 平衡因子
-focal_gamma = 2.0  # 当 loss_type == "Focal" 时生效：gamma 聚焦参数
+# 损失函数类型选择，支持以下选项：
+# - "CrossEntropy": 标准交叉熵损失（会根据类别权重自动选择是否使用加权版本）
+# - "Focal": Focal Loss，用于处理类别不平衡问题
+# - "WeightedCrossEntropy": 强制使用加权交叉熵损失（需要手动提供类别权重）
+loss_type = "WeightedCrossEntropy"  
+
+# Focal Loss 参数（仅当 loss_type == "Focal" 时生效）
+focal_alpha = 1.0  # Focal Loss的alpha参数：平衡因子，用于调整正负样本权重
+focal_gamma = 2.0  # Focal Loss的gamma参数：聚焦参数，用于降低易分类样本权重
 
 ################################# 学习率调度器参数 ##################################
 # 将是否使用调度器合并到 scheduler_type 中，指定 "None" 表示不使用调度器
@@ -209,6 +214,7 @@ for image_path, gt_path in zip(image_paths, gt_paths):
             num_classes,
             image,
             gt,
+            class_weights,
         ) = load_data(
             image_path=image_path,
             gt_path=gt_path,
@@ -227,7 +233,7 @@ for image_path, gt_path in zip(image_paths, gt_paths):
         logger.log_model_graph(model, sample_input)
         print("已将网络结构写入 TensorBoard")
         ################################# 创建损失函数 ##################################
-        criterion = create_criterion(loss_type, focal_alpha, focal_gamma)
+        criterion = create_criterion(loss_type, focal_alpha, focal_gamma, class_weights)
         ################################# 创建优化器 ##################################
         optimizer = create_optimizer(
             model.parameters(),

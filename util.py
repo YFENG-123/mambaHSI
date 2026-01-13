@@ -129,6 +129,23 @@ def load_data(
         torch.where(gt_flatten == i)[0].tolist() for i in range(max_label + 1)
     ]
 
+    # 计算类别权重（自动适配不同数据集）
+    class_counts = [len(label_index_list[i]) for i in range(max_label + 1)]
+    total_samples = sum(class_counts[1:])  # 排除背景类
+    class_weights = []
+    for i in range(max_label + 1):
+        # 使用逆频率加权：权重 = 总样本数 / (类别数 * 类别样本数)
+        weight = (
+            total_samples / (max_label * class_counts[i])
+            if class_counts[i] > 0
+            else 1.0
+        )
+        class_weights.append(weight)
+    print("自动计算的类别权重:")
+    for i, (count, weight) in enumerate(zip(class_counts, class_weights)):
+        if i > 0:  # 只显示非背景类
+            print(f"  类别 {i}: {count} 样本, 权重 {weight:.3f}")
+
     # 分割gt
     train_label_index_list = []
     test_label_index_list = []
@@ -215,6 +232,7 @@ def load_data(
         max_label + 1,
         image,
         gt,
+        class_weights,  # 新增：自动计算的类别权重
     )
 
 
@@ -678,21 +696,33 @@ def init_results_file_header(
         results_file.write("=" * 120 + "\n\n")
 
 
-def create_criterion(loss_selector, focal_alpha, focal_gamma):
+def create_criterion(loss_selector, focal_alpha, focal_gamma, class_weights=None):
     """
-    创建并返回损失函数（FocalLoss 或 CrossEntropyLoss）。
-    loss_selector: 可以是布尔值（True表示Focal）或字符串（以 "foc" 开头表示 Focal）
-    """
-    use_focal = False
-    if isinstance(loss_selector, bool):
-        use_focal = loss_selector
-    elif isinstance(loss_selector, str):
-        use_focal = loss_selector.lower().startswith("foc")
+    创建并返回损失函数，支持多种损失函数类型。
 
-    if use_focal:
+    Args:
+        loss_selector (str): 损失函数类型选择
+            - "CrossEntropy": 标准交叉熵损失。若提供class_weights且类别不平衡，会自动使用加权版本
+            - "Focal": Focal Loss，适用于类别不平衡场景
+            - "WeightedCrossEntropy": 强制使用加权交叉熵损失（需要提供class_weights）
+        focal_alpha (float): Focal Loss的alpha参数（平衡因子）
+        focal_gamma (float): Focal Loss的gamma参数（聚焦参数）
+        class_weights (list, optional): 类别权重列表，用于加权交叉熵损失
+
+    Returns:
+        torch.nn.Module: 配置好的损失函数
+
+    Note:
+        当loss_selector="CrossEntropy"且检测到类别不平衡时，会自动切换到加权交叉熵损失。
+    """
+    if loss_selector == "Focal":
         print(f"使用Focal Loss: alpha={focal_alpha}, gamma={focal_gamma}")
         return FocalLoss(alpha=focal_alpha, gamma=focal_gamma)
-    else:
+    elif loss_selector == "WeightedCrossEntropy":
+        weights = torch.tensor(class_weights, dtype=torch.float32)
+        print(f"使用Weighted CrossEntropy Loss: weights={class_weights}")
+        return nn.CrossEntropyLoss(weight=weights).to("cuda")
+    elif loss_selector == "CrossEntropy":
         print("使用CrossEntropyLoss")
         return nn.CrossEntropyLoss()
 

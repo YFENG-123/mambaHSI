@@ -13,7 +13,7 @@ class ClassifierModule(nn.Module):
     """
 
     def __init__(
-        self, in_dim: int, hidden_dim: int, out_dim: int, dropout_rate: float = 0.5
+        self, in_dim: int, hidden_dim: int, out_dim: int, dropout_rate: float = 0.3
     ):
         super().__init__()
         self.in_dim = in_dim

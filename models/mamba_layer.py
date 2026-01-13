@@ -52,5 +52,7 @@ class MambaLayer(nn.Module):
         x_mamba = self.gelu(x_mamba)
         x_mamba = self.dropout(x_mamba)
         x_mamba = x_mamba + residual
-
+        x_mamba = self.norm(x_mamba)
+        x_mamba = self.gelu(x_mamba)
+        x_mamba = self.dropout(x_mamba)
         return x_mamba
