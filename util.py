@@ -663,17 +663,16 @@ def init_results_file_header(
         results_file.write(f"  验证集比例: {val_split_rate}\n")
         results_file.write(f"  测试集比例: {test_split_rate}\n")
         # 写入损失函数参数（支持布尔或字符串选择）
-        use_focal = False
-        if isinstance(loss_selector, bool):
-            use_focal = loss_selector
-        elif isinstance(loss_selector, str):
-            use_focal = loss_selector.lower().startswith("foc")
-        if use_focal:
+
+        if loss_selector == "Focal":
             results_file.write("  损失函数: Focal Loss\n")
             results_file.write(f"    Alpha: {focal_alpha}\n")
             results_file.write(f"    Gamma: {focal_gamma}\n")
-        else:
+        elif loss_selector == "WeightedCrossEntropy":
+            results_file.write("  损失函数: Weighted CrossEntropy Loss\n")
+        elif loss_selector == "CrossEntropy":
             results_file.write("  损失函数: CrossEntropyLoss\n")
+
         results_file.write(f"  随机种子: {seeds}\n")
         # 写入学习率调度器参数（当 scheduler_type != "None" 时写入）
         if scheduler_type != "None":

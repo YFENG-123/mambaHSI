@@ -1,14 +1,19 @@
 """
 spectral_branch 模块
 
-实现光谱分支（SpectralBranchModule），用于对每个像素的光谱向量进行平滑与特征映射。
-该模块通过谱轴平滑（ReplicationPad1d + Conv1d）保护短谱带场景的稳定性，然后使用全连接 MLP
-将原始谱长映射到中间表示（feat_channels），再投影到输出通道数。
+实现光谱分支（SpectralBranchModule），用于对每个像素的光谱向量进行多尺度特征提取与融合。
+该模块采用与空间分支相同的残差拼接融合策略：多尺度1D卷积 + 残差连接 + 通道拼接 + 1D卷积融合。
+
+架构特点：
+- 多尺度1D卷积：3x3、5x5、7x7并行分支提取不同感受野的光谱特征
+- 残差连接：保留原始光谱信息，避免信息丢失
+- 统一融合：在通道维度拼接后通过1D卷积融合到目标谱长
+- 最终投影：将融合后的谱向量映射到输出通道数
 
 设计要点：
-- 谱轴预平滑以降低高频噪声并提升对极短谱带长度的鲁棒性。
-- 以全连接（MLP）为主的光谱特征提取更适合逐像素的谱向量建模。
-- 保持实现稳定性与可复现性，移除了复杂的 SE 结构以减少小样本过拟合风险。
+- 采用与空间分支类似的残差拼接策略，但针对谱向量特性优化
+- 通过全局平均池化提取分支特征，避免序列维度的大卷积操作
+- 残差连接保留原始光谱信息，线性融合确保内存效率
 
 输入/输出约定：
 - 输入 x: (H, W, bands)
@@ -24,7 +29,19 @@ import torch.nn as nn
 
 class SpectralBranchModule(nn.Module):
     """
-    光谱分支模块：仅保留 MLP（输入谱向量 -> MLP -> 输出）
+    光谱分支模块：多尺度1D卷积 + 残差连接融合（内存优化版）
+
+    架构流程：
+    1. 多尺度1D卷积特征提取（3x3, 5x5, 7x7分支）
+    2. 残差分支：原始输入的1x1投影
+    3. 各分支全局平均池化提取特征向量
+    4. 特征向量拼接并线性融合
+    5. 最终线性投影到输出通道数
+
+    内存优化特点：
+    - 全局池化避免序列维度大卷积，显著减少内存使用
+    - 残差连接保留原始光谱信息
+    - 线性融合保持特征丰富性同时控制计算复杂度
     """
 
     def __init__(self, in_channels, out_channels, bias=False, dropout_rate=0.3):
@@ -33,7 +50,8 @@ class SpectralBranchModule(nn.Module):
         self.out_channels = out_channels
         self.bias = bias
         self.dropout_rate = dropout_rate
-        self.conv_channels = max(8, self.in_channels // 24)
+        # 减少中间通道数以节省内存：原来是 in_channels//24，现在进一步减少
+        self.conv_channels = max(6, self.in_channels // 24)
 
         # 对每个像素的光谱序列使用正常 1D 卷积（Conv1d(1 -> C)），然后在通道维度融合
         # 三个尺度的卷积输出中间通道数 self.conv_channels
@@ -56,25 +74,23 @@ class SpectralBranchModule(nn.Module):
             nn.Dropout(self.dropout_rate),
         )
 
-        # 在残差相加后进行归一化 + 激活 + dropout（逐像素）
-        self.post_fuse = nn.Sequential(
-            nn.LayerNorm(self.in_channels),
+        # 残差分支：将原始输入投影到中间通道数以匹配其他分支
+        self.residual_proj = nn.Sequential(
+            nn.Conv1d(1, self.conv_channels, kernel_size=1, bias=self.bias),
+            nn.GroupNorm(1, self.conv_channels),
             nn.GELU(),
             nn.Dropout(self.dropout_rate),
         )
 
-        # 可学习的多尺度融合权重（4个分支：3x3, 5x5, 7x7, 原始信号）
-        #self.fusion_weights = nn.Parameter(torch.ones(4), requires_grad=True)
-        # 优化初始化：给予原始信号更高的权重，更好保持类别特征
-        self.fusion_weights = nn.Parameter(torch.tensor([0.8, 0.8, 0.8, 1.2]), requires_grad=True)
-
-        # Linear 输入维度为谱长度 self.in_channels
-        self.project_fc = nn.Sequential(
-            nn.Linear(self.in_channels, self.out_channels, bias=self.bias),
+        # 内存优化融合策略：每个分支分别进行全局平均池化，然后拼接并线性融合
+        # 这样避免了在序列维度上的复杂卷积，大幅减少内存使用
+        self.fusion_linear = nn.Sequential(
+            nn.Linear(self.conv_channels * 4, self.out_channels, bias=self.bias),
             nn.LayerNorm(self.out_channels),
             nn.GELU(),
             nn.Dropout(self.dropout_rate),
         )
+
 
     def forward(self, x):
         # x: (H, W, bands)
@@ -82,22 +98,26 @@ class SpectralBranchModule(nn.Module):
 
         # 将每个像素的谱向量批量化为 (H*W, 1, bands)
         x_pixels = x.reshape(-1, bands).unsqueeze(1).contiguous()  # (H*W, 1, bands)
+
+        # 多尺度1D卷积分支
         x3 = self.conv3(x_pixels)  # (H*W, C, bands)
         x5 = self.conv5(x_pixels)  # (H*W, C, bands)
         x7 = self.conv7(x_pixels)  # (H*W, C, bands)
-        # 可学习的加权融合（使用softmax归一化的权重）
-        weights = torch.softmax(self.fusion_weights, dim=0)
-        x_fused_seq = (
-            weights[0] * x3.sum(dim=1) +
-            weights[1] * x5.sum(dim=1) +
-            weights[2] * x7.sum(dim=1) +
-            weights[3] * x_pixels.squeeze(1)
-        )  # (H*W, bands)
-        x_fused_seq = self.post_fuse(x_fused_seq)
 
-        # 逐像素将谱序列投影到 out_channels（保持原模块输出接口）
-        x_proj = self.project_fc(x_fused_seq)  # (H*W, out_channels)
+        # 残差分支：原始输入经过1x1投影
+        x_res = self.residual_proj(x_pixels)  # (H*W, C, bands)
 
-        # 恢复为 (H, W, out_channels)
-        out = x_proj.reshape(h_out, w_out, self.out_channels)
-        return out
+        # 内存优化融合：每个分支分别全局平均池化，然后拼接
+        # 对每个分支在谱轴维度进行全局平均池化
+        x3_pooled = x3.mean(dim=-1)  # (H*W, C)
+        x5_pooled = x5.mean(dim=-1)  # (H*W, C)
+        x7_pooled = x7.mean(dim=-1)  # (H*W, C)
+        x_res_pooled = x_res.mean(dim=-1)  # (H*W, C)
+
+        # 在特征维度拼接所有分支
+        x_cat = torch.cat([x3_pooled, x5_pooled, x7_pooled, x_res_pooled], dim=-1)  # (H*W, 4*C)
+
+        # 通过线性层融合到谱向量维度
+        x_out = self.fusion_linear(x_cat)  # (H*W, in_channels)
+
+        return x_out.reshape(h_out, w_out, self.out_channels)

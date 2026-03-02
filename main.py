@@ -23,12 +23,12 @@ program_start_time = time.time()
 
 ################################# 设置超参数 #################################
 num_epochs = 1000  # 训练轮数
-learning_rate = 1e-3  # 适配 Pre-Norm Residual 结构
-dropout_rate = 0.1
+learning_rate = 5e-3  # 适配 Pre-Norm Residual 结构
+dropout_rate = 0.3
 # 仅在最后 50 个 epoch 开始保存模型；在倒数第50轮（即开始的那一轮）固定保存一次快照
 save_start_epoch = max(1, num_epochs - 50 + 1)
 ################################# 优化器参数 ##################################
-optimizer_type = "Adam"  # 优化器类型: "SGD", "Adam", "AdamW", "RMSprop", "Adagrad"
+optimizer_type = "AdamW"  # 优化器类型: "SGD", "Adam", "AdamW", "RMSprop", "Adagrad"
 # SGD 参数（随机梯度下降）
 momentum = 0.9  # 动量因子
 weight_decay = 1e-3  # 权重衰减（L2正则化）
@@ -43,7 +43,7 @@ adam_eps = 1e-8  # Adam的epsilon参数
 # - "CrossEntropy": 标准交叉熵损失（会根据类别权重自动选择是否使用加权版本）
 # - "Focal": Focal Loss，用于处理类别不平衡问题
 # - "WeightedCrossEntropy": 强制使用加权交叉熵损失（需要手动提供类别权重）
-loss_type = "WeightedCrossEntropy"  
+loss_type = "WeightedCrossEntropy"
 
 # Focal Loss 参数（仅当 loss_type == "Focal" 时生效）
 focal_alpha = 1.0  # Focal Loss的alpha参数：平衡因子，用于调整正负样本权重
@@ -82,24 +82,36 @@ seeds = [
     #25565,
 ]
 image_paths = [
-    # "data/HuaiLai.mat",
-    # "data/Botswana.mat",
-    # "data/Indian_pines.mat",
-    # "data/KSC.mat",
+    #"data/HuaiLai.mat",
+    #"data/HuaiL_1/HuaiL_1.mat",
+    #"data/HuaiL_2/HuaiL_2.mat",
+    # "data/1/json_convert_to_mat_resize.mat",
+    # "data/2/HuaiLai.mat",
+    # "data/3/MBY.mat",
+    # "data/4/DHHS.mat",
+    #"data/Botswana.mat",
+    #"data/Indian_pines.mat",
+    #"data/KSC.mat",
     "data/Pavia.mat",
-    # "data/PaviaU.mat",
-    # "data/Salinas.mat",
-    # "data/SalinasA.mat",
+    #"data/PaviaU.mat",
+    #"data/Salinas.mat",
+    #"data/SalinasA.mat",
 ]
 gt_paths = [
-    # "data/HuaiLai_gt.mat",
-    # "data/Botswana_gt.mat",
-    # "data/Indian_pines_gt.mat",
-    # "data/KSC_gt.mat",
+    #"data/HuaiLai_gt.mat",
+    #"data/HuaiL_1/HuaiL_1_gt.mat",
+    #"data/HuaiL_2/HuaiL_2_gt.mat",
+    # "data/1/matlab",
+    # "data/2/HuaiLai_gt.mat",
+    # "data/3/MBY-gt.mat",
+    # "data/4/DHHS-gt.mat",
+    #"data/Botswana_gt.mat",
+    #"data/Indian_pines_gt.mat",
+    #"data/KSC_gt.mat",
     "data/Pavia_gt.mat",
-    # "data/PaviaU_gt.mat",
-    # "data/Salinas_gt.mat",
-    # "data/SalinasA_gt.mat",
+    #"data/PaviaU_gt.mat",
+    #"data/Salinas_gt.mat",
+    #"data/SalinasA_gt.mat",
 ]
 val_split_rate = 0.01  # 验证集比例固定严禁修改！！！
 test_split_rate = 0.98  # 测试集比例固定严禁修改！！！
