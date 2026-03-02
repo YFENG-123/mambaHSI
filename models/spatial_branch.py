@@ -24,7 +24,7 @@ import torch
 import torch.nn as nn
 
 
-class SpatialBranchModule(nn.Module):
+class SKFusion(nn.Module):
     """
     空间分支模块：多尺度卷积 + 残差连接融合
 

@@ -66,7 +66,7 @@ T_mult = 1  # 重启后周期的倍数（1表示每次重启周期相同，2表�
 # ExponentialLR 参数（指数衰减）
 exp_gamma = 0.95  # 每个epoch的衰减因子
 # MultiStepLR 参数（在指定里程碑降低学习率）
-milestones = [300, 600, 800]  # 降低学习率的epoch列表
+milestones = [400, 700, 900]  # 降低学习率的epoch列表，在训练后期精细收敛
 
 ################################# 数据集和种子 ##################################
 seeds = [
@@ -224,6 +224,7 @@ for image_path, gt_path in zip(image_paths, gt_paths):
             image_y,
             bands,
             num_classes,
+            class_weights,
             image,
             gt,
             class_weights,
@@ -232,6 +233,8 @@ for image_path, gt_path in zip(image_paths, gt_paths):
             gt_path=gt_path,
             val_split_rate=val_split_rate,
             test_split_rate=test_split_rate,
+            weight_strategy=weight_strategy,
+            smoothing=smoothing,
         )
         ############################### 每个种子重新随机初始化模型参数 ##################################
         model = MambaHSINet(

@@ -1,3 +1,4 @@
+import torch
 from torch.utils.tensorboard import SummaryWriter
 
 
@@ -58,6 +59,7 @@ class Log:
             avg_train_loss: 平均训练损失
             train_acc: 训练准确率
             train_time: 训练时间
+            current_lr: 当前学习率
         """
         # 使用 log copy 的风格：Loss 与 LR 合并到一张图，Accuracy、Time 各自一张图，tag 包含 timestamp 与 data_name
         self.writer.add_scalars(
