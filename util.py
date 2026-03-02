@@ -1,3 +1,19 @@
+"""
+mambaHSI 工具模块
+
+该模块包含训练与评估高光谱图像分类任务时常用的工具函数，包括：
+- 数据加载与 DataLoader 构建（`load_data`）
+- 单个 epoch 的训练/验证/测试流程（`run_model`, `step`）
+- 指标计算（OA/AA/Kappa）与实验结果汇总（`calculate_seed_result`, `calculate_dataset_result`）
+- 结果可视化（`generate_picture`）与文本记录（`init_results_file_header`, `write_results_to_txt`）
+- 损失/优化器/学习率调度器的构建助手（`create_criterion`, `create_optimizer`, `create_scheduler`）
+- 固定随机种子以保证可复现性（`set_seed`）
+
+说明与约定：
+- 本模块中关于张量/数组形状与设备的约定在各函数的 docstring 中有说明，请在调用处留意输入的形状和 dtype。
+- 为保证实验可复现，`DataLoader` 的随机种子和多进程设置在 `load_data` 中已明确处理。
+"""
+
 import os
 import time
 import random
@@ -10,6 +26,8 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.optim import lr_scheduler
 from torch.utils.data import TensorDataset, DataLoader
+import torch.optim as optim
+from torch.optim import lr_scheduler
 
 
 def set_seed(seed):
@@ -203,6 +221,23 @@ def load_data(
         torch.where(gt_flatten == i)[0].tolist() for i in range(max_label + 1)
     ]
 
+    # 计算类别权重（自动适配不同数据集）
+    class_counts = [len(label_index_list[i]) for i in range(max_label + 1)]
+    total_samples = sum(class_counts[1:])  # 排除背景类
+    class_weights = []
+    for i in range(max_label + 1):
+        # 使用逆频率加权：权重 = 总样本数 / (类别数 * 类别样本数)
+        weight = (
+            total_samples / (max_label * class_counts[i])
+            if class_counts[i] > 0
+            else 1.0
+        )
+        class_weights.append(weight)
+    print("自动计算的类别权重:")
+    for i, (count, weight) in enumerate(zip(class_counts, class_weights)):
+        if i > 0:  # 只显示非背景类
+            print(f"  类别 {i}: {count} 样本, 权重 {weight:.3f}")
+
     # 分割gt
     train_label_index_list = []
     test_label_index_list = []
@@ -306,26 +341,32 @@ def load_data(
         class_weights,
         image,
         gt,
+        class_weights,  # 新增：自动计算的类别权重
     )
 
 
-def run_model(model, loader, criterion, optimizer, mode):
+def run_model(model, loader, criterion, optimizer, mode, scheduler=None):
+    """
+    运行一个 epoch 的模型（train/val/test）。
+    如果 mode == "train" 且传入了 scheduler，则在 epoch 结束时执行 scheduler.step() 并返回更新后的学习率。
+    无论何种模式，返回结果的最后一项均为当前 learning rate（float）。
+    """
     if mode == "train":
         model.train()
-        return step(model, loader, criterion, optimizer, mode)
+        return step(model, loader, criterion, optimizer, mode, scheduler)
     elif mode == "val":
         model.eval()
         with torch.no_grad():
-            return step(model, loader, criterion, optimizer, mode)
+            return step(model, loader, criterion, optimizer, mode, scheduler)
     elif mode == "test":
         model.eval()
         with torch.no_grad():
-            return step(model, loader, criterion, optimizer, mode)
+            return step(model, loader, criterion, optimizer, mode, scheduler)
     else:
         raise ValueError(f"Invalid mode: {mode}")
 
 
-def step(model, loader, criterion, optimizer, mode):
+def step(model, loader, criterion, optimizer, mode, scheduler=None):
     start_time = time.time()
     total_loss = 0.0
     correct_label = 0
@@ -363,6 +404,8 @@ def step(model, loader, criterion, optimizer, mode):
             # 梯度裁剪：防止梯度爆炸，提高训练稳定性
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
+            if scheduler is not None:
+                scheduler.step()
 
         # 计算准确率
         _, predicted = outputs_masked.max(1)
@@ -383,6 +426,10 @@ def step(model, loader, criterion, optimizer, mode):
 
     end_time = time.time()
     elapsed_time = end_time - start_time
+
+    # 返回当前学习率，便于外部记录（无论是否执行了 step）
+    current_lr = optimizer.param_groups[0]["lr"]
+
     return (
         avg_loss,
         acc,
@@ -391,6 +438,7 @@ def step(model, loader, criterion, optimizer, mode):
         full_prediction_map,
         full_test_label,
         elapsed_time,
+        current_lr,
     )
 
 
@@ -662,7 +710,7 @@ def generate_picture(  # 生成测试集结果可视化图片
     plt.close()
 
 
-def init_results_file(
+def init_results_file_header(
     results_txt_path,
     timestamp,
     num_epochs,
@@ -677,11 +725,13 @@ def init_results_file(
     adam_eps,
     val_split_rate,
     test_split_rate,
-    loss_type,
+    loss_selector,
     focal_alpha,
     focal_gamma,
     seeds,
     scheduler_type,
+    scheduler_patience,
+    scheduler_factor,
     scheduler_min_lr,
     step_size,
     gamma,
@@ -691,36 +741,8 @@ def init_results_file(
     exp_gamma,
     milestones,
 ):
-    """Initialize results txt file with experiment header.
-
-    Args:
-        results_txt_path (str): path to results txt file
-        timestamp (str): experiment timestamp
-        num_epochs (int): number of training epochs
-        learning_rate (float): learning rate
-        dropout_rate (float): dropout rate
-        optimizer_type (str): optimizer type
-        momentum (float): momentum factor
-        weight_decay (float): weight decay
-        nesterov (bool): whether to use Nesterov momentum
-        adam_beta1 (float): Adam beta1 parameter
-        adam_beta2 (float): Adam beta2 parameter
-        adam_eps (float): Adam epsilon parameter
-        val_split_rate (float): validation split rate
-        test_split_rate (float): test split rate
-        loss_type (str): loss function type
-        focal_alpha (float): Focal Loss alpha parameter
-        focal_gamma (float): Focal Loss gamma parameter
-        seeds (list): list of random seeds
-        scheduler_type (str): scheduler type, "None" means no scheduler
-        scheduler_min_lr (float): minimum learning rate
-        step_size (int): step size for StepLR
-        gamma (float): decay factor
-        T_max (int): maximum period for CosineAnnealingLR
-        T_0 (int): initial period for CosineAnnealingWarmRestarts
-        T_mult (int): period multiplier for CosineAnnealingWarmRestarts
-        exp_gamma (float): exponential decay factor
-        milestones (list): milestones for MultiStepLR
+    """
+    初始化并写入结果文件的头部信息（覆盖写入）。
     """
     with open(results_txt_path, "w", encoding="utf-8") as results_file:
         results_file.write("=" * 120 + "\n")
@@ -731,6 +753,7 @@ def init_results_file(
         results_file.write(f"  学习率: {learning_rate}\n")
         results_file.write(f"  Dropout率: {dropout_rate}\n")
         results_file.write(f"  优化器类型: {optimizer_type}\n")
+        # 写入优化器参数
         if optimizer_type == "SGD":
             results_file.write(f"    动量: {momentum}\n")
             results_file.write(f"    权重衰减: {weight_decay}\n")
@@ -748,11 +771,19 @@ def init_results_file(
             results_file.write(f"    Epsilon: {adam_eps}\n")
         results_file.write(f"  验证集比例: {val_split_rate}\n")
         results_file.write(f"  测试集比例: {test_split_rate}\n")
-        results_file.write(f"  损失函数类型: {loss_type}\n")
-        if loss_type == "FocalLoss":
+        # 写入损失函数参数（支持布尔或字符串选择）
+
+        if loss_selector == "Focal":
+            results_file.write("  损失函数: Focal Loss\n")
             results_file.write(f"    Alpha: {focal_alpha}\n")
             results_file.write(f"    Gamma: {focal_gamma}\n")
+        elif loss_selector == "WeightedCrossEntropy":
+            results_file.write("  损失函数: Weighted CrossEntropy Loss\n")
+        elif loss_selector == "CrossEntropy":
+            results_file.write("  损失函数: CrossEntropyLoss\n")
+
         results_file.write(f"  随机种子: {seeds}\n")
+        # 写入学习率调度器参数（当 scheduler_type != "None" 时写入）
         if scheduler_type != "None":
             results_file.write(f"  学习率调度器: {scheduler_type} (PyTorch自带)\n")
             if scheduler_type == "StepLR":
@@ -771,6 +802,233 @@ def init_results_file(
                 results_file.write(f"    里程碑: {milestones}\n")
                 results_file.write(f"    衰减因子: {gamma}\n")
         results_file.write("=" * 120 + "\n\n")
+
+
+def create_criterion(loss_selector, focal_alpha, focal_gamma, class_weights=None):
+    """
+    创建并返回损失函数，支持多种损失函数类型。
+
+    Args:
+        loss_selector (str): 损失函数类型选择
+            - "CrossEntropy": 标准交叉熵损失。若提供class_weights且类别不平衡，会自动使用加权版本
+            - "Focal": Focal Loss，适用于类别不平衡场景
+            - "WeightedCrossEntropy": 强制使用加权交叉熵损失（需要提供class_weights）
+        focal_alpha (float): Focal Loss的alpha参数（平衡因子）
+        focal_gamma (float): Focal Loss的gamma参数（聚焦参数）
+        class_weights (list, optional): 类别权重列表，用于加权交叉熵损失
+
+    Returns:
+        torch.nn.Module: 配置好的损失函数
+
+    Note:
+        当loss_selector="CrossEntropy"且检测到类别不平衡时，会自动切换到加权交叉熵损失。
+    """
+    if loss_selector == "Focal":
+        print(f"使用Focal Loss: alpha={focal_alpha}, gamma={focal_gamma}")
+        return FocalLoss(alpha=focal_alpha, gamma=focal_gamma)
+    elif loss_selector == "WeightedCrossEntropy":
+        weights = torch.tensor(class_weights, dtype=torch.float32)
+        print(f"使用Weighted CrossEntropy Loss: weights={class_weights}")
+        return nn.CrossEntropyLoss(weight=weights).to("cuda")
+    elif loss_selector == "CrossEntropy":
+        print("使用CrossEntropyLoss")
+        return nn.CrossEntropyLoss()
+
+
+def create_optimizer(
+    model_parameters,
+    optimizer_type,
+    learning_rate,
+    momentum,
+    weight_decay,
+    nesterov,
+    adam_beta1,
+    adam_beta2,
+    adam_eps,
+):
+    """
+    根据配置创建并返回优化器实例。
+    """
+    if optimizer_type == "SGD":
+        return optim.SGD(
+            model_parameters,
+            lr=learning_rate,
+            momentum=momentum,
+            weight_decay=weight_decay,
+            nesterov=nesterov,
+        )
+    elif optimizer_type == "Adam":
+        return optim.Adam(
+            model_parameters,
+            lr=learning_rate,
+            betas=(adam_beta1, adam_beta2),
+            eps=adam_eps,
+            weight_decay=weight_decay,
+        )
+    elif optimizer_type == "AdamW":
+        return optim.AdamW(
+            model_parameters,
+            lr=learning_rate,
+            betas=(adam_beta1, adam_beta2),
+            eps=adam_eps,
+            weight_decay=weight_decay,
+        )
+    elif optimizer_type == "RMSprop":
+        return optim.RMSprop(
+            model_parameters,
+            lr=learning_rate,
+            momentum=momentum,
+            weight_decay=weight_decay,
+        )
+    elif optimizer_type == "Adagrad":
+        return optim.Adagrad(
+            model_parameters,
+            lr=learning_rate,
+            weight_decay=weight_decay,
+            eps=adam_eps,
+        )
+    else:
+        print(f"警告: 未知的优化器类型 {optimizer_type}，使用默认SGD")
+        return optim.SGD(
+            model_parameters,
+            lr=learning_rate,
+            momentum=momentum,
+            weight_decay=weight_decay,
+        )
+
+
+def create_scheduler(
+    scheduler_type,
+    optimizer,
+    val_split_rate,
+    scheduler_patience,
+    scheduler_factor,
+    scheduler_min_lr,
+    step_size,
+    gamma,
+    T_max,
+    T_0,
+    T_mult,
+    exp_gamma,
+    milestones,
+):
+    """
+    根据配置创建并返回学习率调度器（或 None）。
+    使用 scheduler_type == "None" 表示不使用调度器。
+    """
+    # 如果显式指定不使用调度器（"None"），直接返回 None
+    if scheduler_type == "None":
+        return None
+
+    # 不再支持 ReduceLROnPlateau；其它基于 epoch 的调度器如下
+    elif scheduler_type == "StepLR":
+        return lr_scheduler.StepLR(optimizer, step_size=step_size, gamma=gamma)
+    elif scheduler_type == "CosineAnnealingLR":
+        return lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=T_max, eta_min=scheduler_min_lr
+        )
+    elif scheduler_type == "CosineAnnealingWarmRestarts":
+        return lr_scheduler.CosineAnnealingWarmRestarts(
+            optimizer, T_0=T_0, T_mult=T_mult, eta_min=scheduler_min_lr
+        )
+    elif scheduler_type == "ExponentialLR":
+        return lr_scheduler.ExponentialLR(optimizer, gamma=exp_gamma)
+    elif scheduler_type == "MultiStepLR":
+        return lr_scheduler.MultiStepLR(optimizer, milestones=milestones, gamma=gamma)
+    else:
+        print(
+            f"警告: 未知的调度器类型 {scheduler_type}，请使用: None, StepLR, CosineAnnealingLR, CosineAnnealingWarmRestarts, ExponentialLR, MultiStepLR"
+        )
+        return None
+
+
+def print_experiment_config(
+    num_epochs,
+    learning_rate,
+    dropout_rate,
+    optimizer_type,
+    momentum,
+    weight_decay,
+    nesterov,
+    adam_beta1,
+    adam_beta2,
+    adam_eps,
+    val_split_rate,
+    test_split_rate,
+    loss_selector,
+    focal_alpha,
+    focal_gamma,
+    seeds,
+    scheduler_type,
+    scheduler_patience,
+    scheduler_factor,
+    scheduler_min_lr,
+    step_size,
+    gamma,
+    T_max,
+    T_0,
+    T_mult,
+    exp_gamma,
+    milestones,
+    image_paths=None,
+    gt_paths=None,
+):
+    """
+    打印当前实验使用的所有超参数与配置，输出格式化的信息。
+    """
+    print(
+        f"训练轮数:{num_epochs}\t\t学习率:{learning_rate}\t\tDropout率:{dropout_rate}"
+    )
+    print(
+        f"优化器类型:{optimizer_type}\t\t验证集比例:{val_split_rate}\t\t测试集比例:{test_split_rate}"
+    )
+    # 优化器详细参数
+    if optimizer_type == "SGD":
+        print(
+            f"优化器参数 -> 动量: {momentum}, 权重衰减: {weight_decay}, Nesterov: {nesterov}"
+        )
+    elif optimizer_type in ["Adam", "AdamW"]:
+        print(
+            f"优化器参数 -> Beta1: {adam_beta1}, Beta2: {adam_beta2}, Epsilon: {adam_eps}, 权重衰减: {weight_decay}"
+        )
+    elif optimizer_type == "RMSprop":
+        print(f"优化器参数 -> 动量: {momentum}, 权重衰减: {weight_decay}")
+    elif optimizer_type == "Adagrad":
+        print(f"优化器参数 -> 权重衰减: {weight_decay}, Epsilon: {adam_eps}")
+    # 损失函数（支持布尔或字符串选择）
+    use_focal = False
+    if isinstance(loss_selector, bool):
+        use_focal = loss_selector
+    elif isinstance(loss_selector, str):
+        use_focal = loss_selector.lower().startswith("foc")
+    if use_focal:
+        print(f"损失函数: Focal Loss (alpha={focal_alpha}, gamma={focal_gamma})")
+    else:
+        print("损失函数: CrossEntropyLoss")
+    # 随机种子
+    print(f"随机种子列表: {seeds}")
+    # 学习率调度器
+    if scheduler_type != "None":
+        print(f"学习率调度器: {scheduler_type}")
+        if scheduler_type == "StepLR":
+            print(f"  步长: {step_size}, 衰减因子: {gamma}")
+        elif scheduler_type == "CosineAnnealingLR":
+            print(f"  周期: {T_max}, 最小学习率: {scheduler_min_lr}")
+        elif scheduler_type == "CosineAnnealingWarmRestarts":
+            print(
+                f"  初始周期: {T_0}, 周期倍数: {T_mult}, 最小学习率: {scheduler_min_lr}"
+            )
+        elif scheduler_type == "ExponentialLR":
+            print(f"  衰减因子: {exp_gamma}")
+        elif scheduler_type == "MultiStepLR":
+            print(f"  里程碑: {milestones}, 衰减因子: {gamma}")
+    else:
+        print("学习率调度器: None (不使用调度器)")
+    # 数据集信息（可选）
+    if image_paths is not None:
+        print(f"使用数据集列表: {image_paths}")
+    if gt_paths is not None:
+        print(f"使用标签文件列表: {gt_paths}")
 
 
 def write_results_to_txt(  # 将实验结果写入txt文件
@@ -816,7 +1074,6 @@ def write_results_to_txt(  # 将实验结果写入txt文件
             - best_model_loss: 最佳模型loss
             - best_model_acc: 最佳模型accuracy
             - best_model_epoch: 最佳模型产生的轮次
-            - best_model_type: 最佳模型类型（Train/Val）
         average_oa, average_aa, average_kappa, average_performance, average_training_time, average_test_loss, average_best_model_loss, average_best_model_acc, average_best_model_epoch: 平均值
         std_oa, std_aa, std_kappa, std_performance, std_training_time, std_test_loss, std_best_model_loss, std_best_model_acc, std_best_model_epoch: 标准差
         num_experiments: 种子数量
@@ -840,7 +1097,7 @@ def write_results_to_txt(  # 将实验结果写入txt文件
     )
     results_file.write("-" * 120 + "\n")
     for exp_result in experiment_results:
-        best_model_info = f"{exp_result['best_model_type']} Loss:{exp_result['best_model_loss']:.4f} Acc:{exp_result['best_model_acc']:.2f}%"
+        best_model_info = f"Loss:{exp_result['best_model_loss']:.4f} Acc:{exp_result['best_model_acc']:.2f}%"
         results_file.write(
             f"{exp_result['seed_idx']:<6} "
             f"{exp_result['seed']:<8} "
@@ -853,13 +1110,10 @@ def write_results_to_txt(  # 将实验结果写入txt文件
             f"{exp_result['best_model_epoch']:<10}\n"
         )
     results_file.write("-" * 120 + "\n")
-    # 确定最佳模型类型的显示（如果所有种子类型相同则显示，否则显示"Mixed"）
-    best_model_types = [exp["best_model_type"] for exp in experiment_results]
-    if len(set(best_model_types)) == 1:
-        avg_best_model_type = best_model_types[0]
-    else:
-        avg_best_model_type = "Mixed"
-    avg_best_model_info = f"{avg_best_model_type} Loss:{average_best_model_loss:.4f} Acc:{average_best_model_acc:.2f}%"
+    # 汇总最佳模型信息（仅包含 loss 和 acc）
+    avg_best_model_info = (
+        f"Loss:{average_best_model_loss:.4f} Acc:{average_best_model_acc:.2f}%"
+    )
     results_file.write(
         f"{'平均':<6} {'-':<8} "
         f"{average_training_time:<14.2f} "

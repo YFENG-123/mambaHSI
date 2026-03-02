@@ -1,6 +1,7 @@
 __pycache__/
+.vscode/
+.cursor/
 data/
 results/
 results_save/
-.cursor/
-.vscode/
+

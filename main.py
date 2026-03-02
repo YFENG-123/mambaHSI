@@ -10,11 +10,11 @@ from util import (
     generate_picture,
     set_seed,
     write_results_to_txt,
-    init_results_file,
+    init_results_file_header,
     create_criterion,
     create_optimizer,
     create_scheduler,
-    print_hyperparameters,
+    print_experiment_config,
 )
 from log import Log
 
@@ -23,33 +23,38 @@ program_start_time = time.time()
 
 ################################# 设置超参数 #################################
 num_epochs = 1000  # 训练轮数
-learning_rate = 4e-3  # 保持4e-3，配合架构优化（Enhanced Spectral Branch + Stable Cross-Modal Attention）提升性能
-dropout_rate = 0.3  # 保持0.3，配合架构优化，提升不同种子的稳定性（V4.15）
-
-################################# 损失函数参数 ##################################
-loss_type = "CrossEntropyLoss"  # 回退到CrossEntropyLoss，FocalLoss导致整体OA下降（94.78% vs 96.44%）
-# 损失函数参数
-focal_alpha = 1.0  # Focal Loss的alpha参数（将使用类别权重class_weights，自动平衡小样本类别）
-focal_gamma = 2.0  # Focal Loss的gamma参数（聚焦参数，控制难易样本的权重，2.0适合类别不平衡）
-
-################################# 类别权重参数 ##################################
-weight_strategy = "inverse_frequency"  # 回退到最佳基线策略，已验证为最稳定的配置（OA=96.44%）
-smoothing = 1.0  # 平滑参数，用于"smooth_inverse"策略
-
+learning_rate = 5e-4  # 适配 Pre-Norm Residual 结构
+dropout_rate = 0.3
+# 仅在最后 50 个 epoch 开始保存模型；在倒数第50轮（即开始的那一轮）固定保存一次快照
+save_start_epoch = max(1, num_epochs - 50 + 1)
 ################################# 优化器参数 ##################################
-optimizer_type = "Adam"  # 优化器类型: "SGD", "Adam", "AdamW", "RMSprop", "Adagrad"
+optimizer_type = "AdamW"  # 优化器类型: "SGD", "Adam", "AdamW", "RMSprop", "Adagrad"
 # SGD 参数（随机梯度下降）
 momentum = 0.9  # 动量因子
-weight_decay = 1e-4  # 权重衰减（L2正则化）
+weight_decay = 1e-3  # 权重衰减（L2正则化）
 nesterov = False  # 是否使用Nesterov动量
 # Adam/AdamW 参数
 adam_beta1 = 0.9  # Adam的beta1参数
 adam_beta2 = 0.999  # Adam的beta2参数
 adam_eps = 1e-8  # Adam的epsilon参数
 
+################################# 损失函数参数 ##################################
+# 损失函数类型选择，支持以下选项：
+# - "CrossEntropy": 标准交叉熵损失（会根据类别权重自动选择是否使用加权版本）
+# - "Focal": Focal Loss，用于处理类别不平衡问题
+# - "WeightedCrossEntropy": 强制使用加权交叉熵损失（需要手动提供类别权重）
+loss_type = "WeightedCrossEntropy"
+
+# Focal Loss 参数（仅当 loss_type == "Focal" 时生效）
+focal_alpha = 1.0  # Focal Loss的alpha参数：平衡因子，用于调整正负样本权重
+focal_gamma = 2.0  # Focal Loss的gamma参数：聚焦参数，用于降低易分类样本权重
+
 ################################# 学习率调度器参数 ##################################
-scheduler_type = "None"  # 使用MultiStepLR，在特定epoch降低学习率，帮助精细收敛（V4.7 Enhanced）
-scheduler_min_lr = 1e-4  # 最小学习率
+# 将是否使用调度器合并到 scheduler_type 中，指定 "None" 表示不使用调度器
+scheduler_type = "None"  # 调度器类型: "None", "StepLR", "CosineAnnealingLR", "CosineAnnealingWarmRestarts", "ExponentialLR", "MultiStepLR"
+scheduler_patience = 50  # 验证损失不下降的等待轮数（降低patience，更早调整学习率）
+scheduler_factor = 0.5  # 学习率衰减因子（更激进的衰减）
+scheduler_min_lr = 1e-6  # 最小学习率（更小的最小学习率，允许更精细的调整）
 # StepLR 参数（每隔固定轮数降低学习率）
 step_size = 100  # 每多少轮降低一次学习率
 gamma = 0.5  # 学习率衰减因子
@@ -70,64 +75,80 @@ seeds = [
     80,
     443,
     445,
-    # 554,
-    # 3306,
-    # 5900,
-    # 8080,
-    # 25565,
+    #554,
+    #3306,
+    #5900,
+    #8080,
+    #25565,
 ]
 image_paths = [
-    # "data/HuaiLai.mat",
-    # "data/Botswana.mat",
+    #"data/HuaiLai.mat",
+    #"data/HuaiL_1/HuaiL_1.mat",
+    #"data/HuaiL_2/HuaiL_2.mat",
+    # "data/1/json_convert_to_mat_resize.mat",
+    # "data/2/HuaiLai.mat",
+    # "data/3/MBY.mat",
+    # "data/4/DHHS.mat",
+    #"data/Botswana.mat",
     #"data/Indian_pines.mat",
-    # "data/KSC.mat",
-     "data/Pavia.mat",
-    # "data/PaviaU.mat",
-    # "data/Salinas.mat",
-    # "data/SalinasA.mat",
+    #"data/KSC.mat",
+    "data/Pavia.mat",
+    #"data/PaviaU.mat",
+    #"data/Salinas.mat",
+    #"data/SalinasA.mat",
 ]
 gt_paths = [
-    # "data/HuaiLai_gt.mat",
-    # "data/Botswana_gt.mat",
+    #"data/HuaiLai_gt.mat",
+    #"data/HuaiL_1/HuaiL_1_gt.mat",
+    #"data/HuaiL_2/HuaiL_2_gt.mat",
+    # "data/1/matlab",
+    # "data/2/HuaiLai_gt.mat",
+    # "data/3/MBY-gt.mat",
+    # "data/4/DHHS-gt.mat",
+    #"data/Botswana_gt.mat",
     #"data/Indian_pines_gt.mat",
-    # "data/KSC_gt.mat",
-     "data/Pavia_gt.mat",
-    # "data/PaviaU_gt.mat",
-    # "data/Salinas_gt.mat",
-    # "data/SalinasA_gt.mat",
+    #"data/KSC_gt.mat",
+    "data/Pavia_gt.mat",
+    #"data/PaviaU_gt.mat",
+    #"data/Salinas_gt.mat",
+    #"data/SalinasA_gt.mat",
 ]
-val_split_rate = 0.1
-test_split_rate = 0.8
+val_split_rate = 0.01  # 验证集比例固定严禁修改！！！
+test_split_rate = 0.98  # 测试集比例固定严禁修改！！！
 
 ################################# 打印超参数 ##################################
-print_hyperparameters(
-    num_epochs=num_epochs,
-    learning_rate=learning_rate,
-    dropout_rate=dropout_rate,
-    optimizer_type=optimizer_type,
-    momentum=momentum,
-    weight_decay=weight_decay,
-    nesterov=nesterov,
-    adam_beta1=adam_beta1,
-    adam_beta2=adam_beta2,
-    adam_eps=adam_eps,
-    loss_type=loss_type,
-    focal_alpha=focal_alpha,
-    focal_gamma=focal_gamma,
-    weight_strategy=weight_strategy,
-    smoothing=smoothing,
-    scheduler_type=scheduler_type,
-    scheduler_min_lr=scheduler_min_lr,
-    step_size=step_size,
-    gamma=gamma,
-    T_max=T_max,
-    T_0=T_0,
-    T_mult=T_mult,
-    exp_gamma=exp_gamma,
-    milestones=milestones,
-    val_split_rate=val_split_rate,
-    test_split_rate=test_split_rate,
+print_experiment_config(
+    num_epochs,
+    learning_rate,
+    dropout_rate,
+    optimizer_type,
+    momentum,
+    weight_decay,
+    nesterov,
+    adam_beta1,
+    adam_beta2,
+    adam_eps,
+    val_split_rate,
+    test_split_rate,
+    loss_type,
+    focal_alpha,
+    focal_gamma,
+    seeds,
+    scheduler_type,
+    scheduler_patience,
+    scheduler_factor,
+    scheduler_min_lr,
+    step_size,
+    gamma,
+    T_max,
+    T_0,
+    T_mult,
+    exp_gamma,
+    milestones,
+    image_paths=image_paths,
+    gt_paths=gt_paths,
 )
+
 
 ################################# 创建结果目录结构 ##################################
 timestamp = time.strftime("%Y%m%d-%H%M%S")
@@ -143,34 +164,36 @@ os.makedirs(images_base_dir, exist_ok=True)
 print(f"图像文件目录: {images_base_dir}")
 
 results_txt_path = os.path.join(results_base_dir, f"results_{timestamp}.txt")
-init_results_file(
-    results_txt_path=results_txt_path,
-    timestamp=timestamp,
-    num_epochs=num_epochs,
-    learning_rate=learning_rate,
-    dropout_rate=dropout_rate,
-    optimizer_type=optimizer_type,
-    momentum=momentum,
-    weight_decay=weight_decay,
-    nesterov=nesterov,
-    adam_beta1=adam_beta1,
-    adam_beta2=adam_beta2,
-    adam_eps=adam_eps,
-    val_split_rate=val_split_rate,
-    test_split_rate=test_split_rate,
-    loss_type=loss_type,
-    focal_alpha=focal_alpha,
-    focal_gamma=focal_gamma,
-    seeds=seeds,
-    scheduler_type=scheduler_type,
-    scheduler_min_lr=scheduler_min_lr,
-    step_size=step_size,
-    gamma=gamma,
-    T_max=T_max,
-    T_0=T_0,
-    T_mult=T_mult,
-    exp_gamma=exp_gamma,
-    milestones=milestones,
+init_results_file_header(
+    results_txt_path,
+    timestamp,
+    num_epochs,
+    learning_rate,
+    dropout_rate,
+    optimizer_type,
+    momentum,
+    weight_decay,
+    nesterov,
+    adam_beta1,
+    adam_beta2,
+    adam_eps,
+    val_split_rate,
+    test_split_rate,
+    loss_type,
+    focal_alpha,
+    focal_gamma,
+    seeds,
+    scheduler_type,
+    scheduler_patience,
+    scheduler_factor,
+    scheduler_min_lr,
+    step_size,
+    gamma,
+    T_max,
+    T_0,
+    T_mult,
+    exp_gamma,
+    milestones,
 )
 print(f"结果记录文件: {results_txt_path}")
 
@@ -204,6 +227,7 @@ for image_path, gt_path in zip(image_paths, gt_paths):
             class_weights,
             image,
             gt,
+            class_weights,
         ) = load_data(
             image_path=image_path,
             gt_path=gt_path,
@@ -220,52 +244,50 @@ for image_path, gt_path in zip(image_paths, gt_paths):
             bands=bands,
             dropout_rate=dropout_rate,
         ).to("cuda")
-        ################################# 将模型架构添加到TensorBoard ##################################
-        # 创建示例输入用于记录模型架构
-        dummy_input = torch.randn(image_x, image_y, bands).to("cuda")
-        logger.add_model_graph(model, dummy_input, data_name, seed_idx + 1)
+        sample_input = image.squeeze(0).to("cuda")
+        logger.log_model_graph(model, sample_input)
+        print("已将网络结构写入 TensorBoard")
         ################################# 创建损失函数 ##################################
-        criterion = create_criterion(
-            loss_type=loss_type,
-            class_weights=class_weights,
-            focal_alpha=focal_alpha,
-            focal_gamma=focal_gamma,
-        )
+        criterion = create_criterion(loss_type, focal_alpha, focal_gamma, class_weights)
         ################################# 创建优化器 ##################################
         optimizer = create_optimizer(
-            model=model,
-            optimizer_type=optimizer_type,
-            learning_rate=learning_rate,
-            momentum=momentum,
-            weight_decay=weight_decay,
-            nesterov=nesterov,
-            adam_beta1=adam_beta1,
-            adam_beta2=adam_beta2,
-            adam_eps=adam_eps,
+            model.parameters(),
+            optimizer_type,
+            learning_rate,
+            momentum,
+            weight_decay,
+            nesterov,
+            adam_beta1,
+            adam_beta2,
+            adam_eps,
         )
         ################################# 创建学习率调度器（使用PyTorch自带的lr_scheduler）##################################
         scheduler = create_scheduler(
-            optimizer=optimizer,
-            scheduler_type=scheduler_type,
-            val_split_rate=val_split_rate,
-            scheduler_min_lr=scheduler_min_lr,
-            step_size=step_size,
-            gamma=gamma,
-            T_max=T_max,
-            T_0=T_0,
-            T_mult=T_mult,
-            exp_gamma=exp_gamma,
-            milestones=milestones,
+            scheduler_type,
+            optimizer,
+            val_split_rate,
+            scheduler_patience,
+            scheduler_factor,
+            scheduler_min_lr,
+            step_size,
+            gamma,
+            T_max,
+            T_0,
+            T_mult,
+            exp_gamma,
+            milestones,
         )
         ################################# 开始一个种子的训练和验证 ##################################
+        # 使用统一变量跟踪最佳模型（训练/验证共用），简化逻辑并提高可读性
         best_loss = float("inf")
         best_acc = 0.0
         best_epoch = 0
-        metric_type = "Val" if val_split_rate > 0 else "Train"
-        start_save_epoch_idx = num_epochs - 50
-
+        best_type = None
+        avg_val_loss = float("inf")
+        val_acc = 0.0
         start_time = time.time()  # 记录每个种子开始时间
         for epoch in range(num_epochs):
+            ############################### 该轮训练和验证开始 ##################################
             print(f"{data_name}_{seed_idx + 1}_Epoch[{epoch + 1}/{num_epochs}]")
             ############################### 每个epoch的训练阶段 ##################################
             (
@@ -276,7 +298,8 @@ for image_path, gt_path in zip(image_paths, gt_paths):
                 full_prediction_map,
                 full_test_label,
                 train_time,
-            ) = run_model(model, train_loader, criterion, optimizer, "train")
+                current_lr,
+            ) = run_model(model, train_loader, criterion, optimizer, "train", scheduler)
             logger.each_train(  # 记录每次训练的结果到TensorBoard
                 data_name,
                 seed_idx + 1,
@@ -284,20 +307,37 @@ for image_path, gt_path in zip(image_paths, gt_paths):
                 avg_train_loss,
                 train_acc,
                 train_time,
-                optimizer.param_groups[0]["lr"],  # 传入当前学习率
+                current_lr,
             )
             print(  # 打印训练集结果
                 f"    Train -> Loss: {avg_train_loss:.4f}, Accuracy: {train_acc:.2f}%, Time: {train_time:.2f}s"
             )
-            ############################### 更新学习率 ##################################
-            if scheduler is not None:
-                scheduler.step()  # 根据epoch更新学习率
-                current_lr = optimizer.param_groups[0]["lr"]
-                print(f"    当前学习率: {current_lr:.6f}")
-            ############################### 如果没有验证集，则跳过验证阶段 ##################################
+            # 当前学习率在 run_model 中已更新（如提供 scheduler），并作为 current_lr 返回
+            print(f"    当前学习率: {current_lr:.6f}")
+            ############################### 如果没有验证集，每个epoch的训练阶段结束后保存最佳模型 ##################################
             if val_split_rate <= 0:
+                current_epoch = epoch + 1
+                # 仅在最后 save_start_epoch 之后才开始保存最佳模型
+                if current_epoch >= save_start_epoch:
+                    # 在倒数第50轮（起始轮）固定保存一次快照
+                    if current_epoch == save_start_epoch:
+                        fixed_save_path = os.path.join(
+                            weights_dir,
+                            f"{seed_idx + 1}_fixed_epoch{current_epoch}.pth",
+                        )
+                        torch.save(model.state_dict(), fixed_save_path)
+                        print(f"    固定快照已保存为: {fixed_save_path}")
+
+                    if avg_train_loss < best_loss:
+                        best_loss = avg_train_loss
+                        best_acc = train_acc
+                        best_epoch = current_epoch
+                        best_type = "Train"
+                        save_path = os.path.join(weights_dir, f"{seed_idx + 1}.pth")
+                        torch.save(model.state_dict(), save_path)
+                        print(f"    模型已在训练阶段结束后保存为: {save_path}")
                 continue
-            ############################### 每个epoch的验证阶段 ##################################
+            ############################### 如果有验证集，每个epoch的验证阶段 ##################################
             (
                 avg_val_loss,
                 val_acc,
@@ -306,6 +346,7 @@ for image_path, gt_path in zip(image_paths, gt_paths):
                 full_prediction_map,
                 full_test_label,
                 val_time,
+                current_lr,
             ) = run_model(model, val_loader, criterion, optimizer, "val")
             logger.each_val(  # 记录每次验证的结果到TensorBoard
                 data_name,
@@ -319,51 +360,44 @@ for image_path, gt_path in zip(image_paths, gt_paths):
                 f"    Val   -> Loss: {avg_val_loss:.4f}, Accuracy: {val_acc:.2f}%, Time: {val_time:.2f}s"
             )
             ############################### 每个epoch保存当前最佳模型 ##################################
-            # 确定当前指标
-            if val_split_rate > 0:
-                current_loss = avg_val_loss
-                current_acc = val_acc
-            else:
-                current_loss = avg_train_loss
-                current_acc = train_acc
+            current_epoch = epoch + 1
+            # 仅在最后 save_start_epoch 之后才进行最佳模型保存
+            if current_epoch >= save_start_epoch:
+                # 在倒数第50轮（起始轮）固定保存一次快照
+                if current_epoch == save_start_epoch:
+                    fixed_save_path = os.path.join(
+                        weights_dir, f"{seed_idx + 1}_fixed_epoch{current_epoch}.pth"
+                    )
+                    torch.save(model.state_dict(), fixed_save_path)
+                    print(f"    固定快照已保存为: {fixed_save_path}")
 
-            # 1. 倒数第50轮 (进入保存阶段的第一轮)：固定保存，并作为基准
-            if epoch == start_save_epoch_idx:
-                best_loss = current_loss
-                best_acc = current_acc
-                best_epoch = epoch + 1
-                torch.save(
-                    model.state_dict(),
-                    os.path.join(weights_dir, f"{seed_idx + 1}.pth"),
-                )
-                print(
-                    f"Model saved at Epoch {best_epoch} (Start of last 50 epochs) with {metric_type} Loss: {best_loss:.4f} {metric_type} Accuracy: {best_acc:.2f}%"
-                )
-
-            # 2. 最后50轮的后续轮次：如果性能更好则保存
-            elif epoch > start_save_epoch_idx:
-                if current_loss < best_loss:
-                    best_loss = current_loss
-                    best_acc = current_acc
-                    best_epoch = epoch + 1
+                if avg_val_loss < best_loss:
+                    best_loss = avg_val_loss
+                    best_acc = val_acc
+                    best_epoch = current_epoch
+                    best_type = "Val"
                     torch.save(
                         model.state_dict(),
                         os.path.join(weights_dir, f"{seed_idx + 1}.pth"),
                     )
                     print(
-                        f"Best model saved at Epoch {best_epoch} with {metric_type} Loss: {best_loss:.4f} {metric_type} Accuracy: {best_acc:.2f}%"
+                        f"Best model saved at Epoch {best_epoch} with Loss: {best_loss:.4f} Accuracy: {best_acc:.2f}%"
                     )
+            ############################### 该轮训练和验证结束 ##################################
         end_time = time.time()  # 记录每个种子结束时间
         total_training_time = end_time - start_time  # 计算每个种子训练时间
         print(f"Training time: {total_training_time:.2f} seconds")
         ################################# 记录一个种子的最佳模型信息 ##################################
+        # 确定保存模型时的loss和acc（使用统一变量）
+        saved_loss = best_loss
+        saved_acc = best_acc
+        saved_epoch = best_epoch
         logger.each_seed(  # 记录一个种子的最佳模型信息到TensorBoard
             data_name,
             seed_idx + 1,
-            best_loss,
-            best_acc,
-            best_epoch,
-            metric_type,
+            saved_loss,
+            saved_acc,
+            saved_epoch,
         )
         ################################# 完成一个种子训练和验证后的测试评估 ##################################
         model.load_state_dict(  # 加载一个种子的最佳模型
@@ -377,6 +411,7 @@ for image_path, gt_path in zip(image_paths, gt_paths):
             full_prediction_map,
             full_test_label,
             test_time,
+            current_lr,
         ) = run_model(model, test_loader, criterion, optimizer, "test")
         oa, aa, kappa, confusion_matrix, class_accuracies = (  # 计算测试集结果
             calculate_seed_result(
@@ -424,10 +459,9 @@ for image_path, gt_path in zip(image_paths, gt_paths):
                 "kappa": kappa,
                 "performance": (oa + aa + kappa) / 3.0,  # 性能指标
                 "class_accuracies": class_accuracies,
-                "best_model_loss": best_loss,
-                "best_model_acc": best_acc,
-                "best_model_epoch": best_epoch,
-                "best_model_type": metric_type,
+                "best_model_loss": saved_loss,
+                "best_model_acc": saved_acc,
+                "best_model_epoch": saved_epoch,
             }
         )
 

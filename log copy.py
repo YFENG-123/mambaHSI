@@ -11,13 +11,37 @@ class Log:
     def __init__(self, log_base_dir, timestamp):
         """
         初始化Log类
-
+        
         参数:
             log_base_dir: TensorBoard日志目录路径（已在main.py中创建）
             timestamp: 时间戳字符串
         """
         self.timestamp = timestamp
         self.writer = SummaryWriter(log_dir=log_base_dir)
+
+
+    def add_model_graph(self, model, input_sample, data_name, seed_idx):
+        """
+        将模型架构添加到TensorBoard
+        
+        参数:
+            model: PyTorch模型
+            input_sample: 示例输入张量，形状为 (H, W, bands)
+            data_name: 数据集名称
+            seed_idx: 种子序号（从1开始）
+        """
+        try:
+            # 将模型设置为评估模式以记录架构
+            model.eval()
+            with torch.no_grad():
+                self.writer.add_graph(
+                    model, 
+                    input_sample,
+                    verbose=False
+                )
+            print(f"    模型架构已添加到TensorBoard: {data_name}_Seed_{seed_idx}")
+        except Exception as e:
+            print(f"    警告: 添加模型架构到TensorBoard时出错: {e}")
 
     def flush(self):
         """刷新TensorBoard writer缓存"""
@@ -27,31 +51,10 @@ class Log:
         """关闭TensorBoard writer"""
         self.writer.close()
 
-    def log_model_graph(self, model, sample_input, verbose=False):
-        """
-        将模型结构写入 TensorBoard（尽可能兼容不同 PyTorch 版本的 add_graph 调用）。
-
-        参数:
-            model: nn.Module 实例
-            sample_input: 传入模型的示例输入，通常是一个 Tensor 或者 tuple/list of Tensors
-            verbose: 是否使用 verbose 模式（传递给 add_graph）
-        """
-        # 直接记录模型结构到 TensorBoard（保持原始简洁风格）
-        self.writer.add_graph(model, (sample_input,), verbose=verbose)
-
-    def each_train(
-        self,
-        data_name,
-        seed_idx,
-        epoch,
-        avg_train_loss,
-        train_acc,
-        train_time,
-        current_lr,
-    ):
+    def each_train(self, data_name, seed_idx, epoch, avg_train_loss, train_acc, train_time, current_lr):
         """
         记录每次训练的结果到TensorBoard
-
+        
         参数:
             data_name: 数据集名称
             seed_idx: 种子序号（从1开始）
@@ -61,23 +64,24 @@ class Log:
             train_time: 训练时间
             current_lr: 当前学习率
         """
-        # 使用 log copy 的风格：Loss 与 LR 合并到一张图，Accuracy、Time 各自一张图，tag 包含 timestamp 与 data_name
+        # 合并 Loss 和 Learning Rate 到一张图
         self.writer.add_scalars(
             f"Loss_LR_{self.timestamp}_{data_name}",
             {
                 f"Train_Loss_{seed_idx}": avg_train_loss,
-                **({f"LR_{seed_idx}": current_lr} if current_lr is not None else {}),
+                f"LR_{seed_idx}": current_lr
             },
             epoch,
         )
 
+        # Acc 单独一张图
         self.writer.add_scalars(
             f"Accuracy_{self.timestamp}_{data_name}",
             {f"Train_Acc_{seed_idx}": train_acc},
             epoch,
         )
-
-        self.writer.add_scalars(
+        
+        self.writer.add_scalars(  # TensorBoard 写入训练时间
             f"Time_{self.timestamp}_{data_name}",
             {f"Train_{seed_idx}": train_time},
             epoch,
@@ -86,7 +90,7 @@ class Log:
     def each_val(self, data_name, seed_idx, epoch, avg_val_loss, val_acc, val_time):
         """
         记录每次验证的结果到TensorBoard
-
+        
         参数:
             data_name: 数据集名称
             seed_idx: 种子序号（从1开始）
@@ -95,20 +99,24 @@ class Log:
             val_acc: 验证准确率
             val_time: 验证时间
         """
-        # 与 train 保持一致的 tag 风格，便于在 TensorBoard 中对比 Train/Val
+        # Loss 单独绘制 (或保留与 LR 相同的 Tag 以便对比，虽然 val 阶段没有 LR 变化)
+        # 为了与 Train Loss 在同一图表中，我们使用相同的 Tag: Loss_LR_{...}
         self.writer.add_scalars(
             f"Loss_LR_{self.timestamp}_{data_name}",
-            {f"Val_Loss_{seed_idx}": avg_val_loss},
+            {
+                f"Val_Loss_{seed_idx}": avg_val_loss,
+            },
             epoch,
         )
 
+        # Acc 单独一张图 (与 Train Acc 同一个图表 Tag)
         self.writer.add_scalars(
             f"Accuracy_{self.timestamp}_{data_name}",
             {f"Val_Acc_{seed_idx}": val_acc},
             epoch,
         )
-
-        self.writer.add_scalars(
+        
+        self.writer.add_scalars(  # TensorBoard 写入验证时间
             f"Time_{self.timestamp}_{data_name}",
             {f"Val_{seed_idx}": val_time},
             epoch,
@@ -127,7 +135,7 @@ class Log:
     ):
         """
         记录每次测试的结果到TensorBoard
-
+        
         参数:
             data_name: 数据集名称
             seed_idx: 种子序号（从1开始）
@@ -138,14 +146,14 @@ class Log:
             total_training_time: 总训练时间
             class_accuracies: 各类别精度列表
         """
-        # 使用 log copy 的风格：将 OA/AA/Kappa/Performance 合并到一张图（便于对比），并记录训练时间单独图
+        # 合并 AA, Kappa, OA, Performance 到一张图
         self.writer.add_scalars(
             f"Test_Metrics_AKOP_{self.timestamp}",
             {
                 f"AA_{data_name}": aa,
                 f"Kappa_{data_name}": kappa,
                 f"OA_{data_name}": oa,
-                f"Performance_{data_name}": performance,
+                f"Performance_{data_name}": performance
             },
             seed_idx,  # x轴：种子序号
         )
@@ -155,7 +163,8 @@ class Log:
             seed_idx,  # x轴：种子序号
         )
 
-        # 每个类别的精度，tag 包含 data_name，series 为 Seed_{seed_idx}
+        # 写入每个类别的精度到TensorBoard（合并为一个表格）
+        # x轴：类别序号，y轴：准确率，每条曲线代表一个种子
         for i, acc in enumerate(class_accuracies):
             self.writer.add_scalars(
                 f"Class_Accuracy_{self.timestamp}_{data_name}",
@@ -163,24 +172,33 @@ class Log:
                 i + 1,  # x轴：class序号
             )
 
-    def each_seed(self, data_name, seed_idx, saved_loss, saved_acc, saved_epoch):
+    def each_seed(
+        self,
+        data_name,
+        seed_idx,
+        saved_loss,
+        saved_acc,
+        saved_epoch,
+        saved_type,
+    ):
         """
         记录每个种子的最佳模型信息到TensorBoard
-
+        
         参数:
             data_name: 数据集名称
             seed_idx: 种子序号（从1开始）
             saved_loss: 最佳模型的损失
             saved_acc: 最佳模型的准确率
             saved_epoch: 最佳模型产生的epoch
+            saved_type: 最佳模型类型（"Train"或"Val"）
         """
-        # 合并 Best Loss/Acc/Epoch 到一张图，series 使用 data_name 便于按数据集查看
+        # 合并 Best Acc, Best Epoch, Best Loss 到一张图
         self.writer.add_scalars(
             f"Best_Model_Metrics_{self.timestamp}",
             {
                 f"Best_Loss_{data_name}": saved_loss,
                 f"Best_Acc_{data_name}": saved_acc,
-                f"Best_Epoch_{data_name}": saved_epoch,
+                f"Best_Epoch_{data_name}": saved_epoch
             },
             seed_idx,  # x轴：种子序号
         )
@@ -197,7 +215,7 @@ class Log:
     ):
         """
         记录每个数据集所有种子的平均结果到TensorBoard
-
+        
         参数:
             data_name: 数据集名称
             len_seeds: 种子数量（用于计算avg_position = len_seeds + 5）
@@ -207,16 +225,17 @@ class Log:
             average_performance: 平均性能指标
             average_training_time: 平均训练时间
         """
-        # 将平均结果写入：与 each_test 保持同样的 AKOP 合并图，便于对比
+        # 将平均结果添加到原始值表格的最后一个点后面第5个点位置
         avg_position = len_seeds + 5
-
+        
+        # 合并 AA, Kappa, OA, Performance 到一张图 (Average)
         self.writer.add_scalars(
             f"Test_Metrics_AKOP_{self.timestamp}",
             {
                 f"Average_AA_{data_name}": average_aa,
                 f"Average_Kappa_{data_name}": average_kappa,
                 f"Average_OA_{data_name}": average_oa,
-                f"Average_Performance_{data_name}": average_performance,
+                f"Average_Performance_{data_name}": average_performance
             },
             avg_position,
         )
