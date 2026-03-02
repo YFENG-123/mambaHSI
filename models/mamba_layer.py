@@ -45,12 +45,13 @@ class MambaLayer(nn.Module):
         # 双向处理：前向 + 翻转的后向
         x_fwd = self.mamba_fwd(x)
         x_bwd = self.mamba_bwd(x.flip(dims=[1])).flip(dims=[1])
-
+        
         # 融合并应用 dropout + 残差
         x_mamba = x_fwd + x_bwd
         x_mamba = self.norm(x_mamba)
         x_mamba = self.gelu(x_mamba)
         x_mamba = self.dropout(x_mamba)
+
         x_mamba = x_mamba + residual
         x_mamba = self.norm(x_mamba)
         x_mamba = self.gelu(x_mamba)
