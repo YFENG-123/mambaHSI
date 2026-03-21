@@ -23,7 +23,7 @@ program_start_time = time.time()
 
 ################################# 设置超参数 #################################
 num_epochs = 1000  # 训练轮数
-learning_rate = 5e-4  # 适配 Pre-Norm Residual 结构
+learning_rate = 5e-3  # 适配 Pre-Norm Residual 结构
 dropout_rate = 0.3
 # 仅在最后 50 个 epoch 开始保存模型；在倒数第50轮（即开始的那一轮）固定保存一次快照
 save_start_epoch = max(1, num_epochs - 50 + 1)
@@ -83,8 +83,8 @@ seeds = [
 ]
 image_paths = [
     #"data/HuaiLai.mat",
-    #"data/HuaiL_1/HuaiL_1.mat",
-    #"data/HuaiL_2/HuaiL_2.mat",
+    "data/HuaiL_1/HuaiL_1.mat",
+    "data/HuaiL_2/HuaiL_2.mat",
     # "data/1/json_convert_to_mat_resize.mat",
     # "data/2/HuaiLai.mat",
     # "data/3/MBY.mat",
@@ -99,8 +99,8 @@ image_paths = [
 ]
 gt_paths = [
     #"data/HuaiLai_gt.mat",
-    #"data/HuaiL_1/HuaiL_1_gt.mat",
-    #"data/HuaiL_2/HuaiL_2_gt.mat",
+    "data/HuaiL_1/HuaiL_1_gt.mat",
+    "data/HuaiL_2/HuaiL_2_gt.mat",
     # "data/1/matlab",
     # "data/2/HuaiLai_gt.mat",
     # "data/3/MBY-gt.mat",
