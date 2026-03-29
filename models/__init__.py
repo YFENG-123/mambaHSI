@@ -24,4 +24,8 @@ __all__ = [
     "MambaLayer",
     "SpatialBranchModule",
     "SpectralBranchModule",
+    "Classifier",
+    "FusionModule",
+    "PreprocessModule",
+    "MambaGlobalModule",
 ]

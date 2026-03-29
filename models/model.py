@@ -30,19 +30,20 @@ from .classifier import ClassifierModule
 
 class MambaHSINet(nn.Module):
     """
-    高光谱图像分类网络（双分支架构 + 多尺度空间特征）
+    高光谱图像分类网络
 
-    架构流程：
-    1. 归一化
-    2. 双分支处理：
-       - 光谱分支：全连接 (Linear)
-       - 空间分支 (SpatialBranchModule)：
-            - 并行 3x3, 5x5, 7x7 卷积
-            - 拼接 -> 1x1 卷积压缩
-    3. 拼接两个分支特征
-    4. 1x1卷积融合
-    5. Mamba处理 (S6Core)
-    6. LayerNorm -> Dropout -> 分类器
+    架构调整目标：
+    1. **解决欠拟合**：恢复 Spatial Branch 的致密卷积能力 (Multi-Scale ResBlock) 和 Spectral Branch 的 MLP 深度。
+    2. **解决抖动和不稳定**：使用 Residual Connections (残差连接) 贯穿全网，特别是 Spatial Branch。
+    3. **保持小样本精度**：保留 SE Attention 和 Global Mamba。
+    
+    六个主要步骤：
+    1. 预处理模块：归一化输入
+    2. 光谱分支模块：提取光谱维度的特征
+    3. 空间分支模块：提取空间维度的特征
+    4. 融合模块：融合双分支特征
+    5. Mamba全局建模模块：全局上下文建模
+    6. 分类模块：最终分类
     """
 
     def __init__(
@@ -92,18 +93,10 @@ class MambaHSINet(nn.Module):
         )
 
     def forward(self, x):
-        """
-        Args:
-            x: 输入高光谱数据 (H, W, bands)
-        Returns:
-            分类结果 (H, W, num_classes)
-        """
         h, w, _ = x.shape
 
-        # 1. 预处理：归一化
-        x_norm = self.preprocess(x)  # (H, W, bands)
-
-        # 2. 双分支处理
+        # 1. 预处理
+        x_norm = self.preprocess_module(x)
 
         # 光谱分支 (消融实验：临时禁用)
         x_spec = self.spectral_branch(x_norm)  # (H, W, d_model)
@@ -135,7 +128,7 @@ class MambaHSINet(nn.Module):
         #x_mamba = x_fused.reshape(-1, self.d_model)  # (H*W, d_model) - 跳过Mamba直接传递
 
         # 6. 分类
-        output = self.classifier(x_mamba)  # (H*W, num_classes)
-        output = output.reshape(h, w, -1)  # (H, W, num_classes)
+        output = self.classifier(x_mamba)
+        output = output.reshape(h, w, -1)
 
         return output

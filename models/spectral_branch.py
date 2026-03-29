@@ -22,12 +22,30 @@ spectral_branch 模块
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+
+
+"""
+模型版本: V4.18
+说明: 光谱分支模块 — 增强SE注意力 + 残差连接，提升健壮性。
+"""
+
 
 # 模型版本: V4.18
 # 说明: 光谱分支模块 — 谱轴平滑 + 全连接投影（去除复杂 SE 以提升稳定性）
 
 
 class SpectralBranchModule(nn.Module):
+    """光谱分支模块：Spectral Smoothing + Multi-Scale CNN + Enhanced SE Attention (V4.18)
+
+    改进：
+    - 在多尺度特征提取之前进行谱轴平滑，降低高频噪声影响。
+    - 使用 3 路并行 Conv1d（kernel=3,5,7）提取多尺度光谱特征。
+    - 通过可学习的注意力加权（pixel-wise attention pooling）对每一路做加权求和，最后拼接并投影到输出通道。
+    - **增强SE注意力** (V4.18)：
+      - 增加中间层深度（3层结构），提升表达能力
+      - 添加残差连接：out = out * (1 + attn)，保留原始特征信息
+      - 提升小样本类别的识别稳定性
     """
     光谱分支模块：多尺度1D卷积 + 残差连接融合（内存优化版）
 
