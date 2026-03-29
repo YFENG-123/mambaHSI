@@ -105,14 +105,16 @@ class MambaHSINet(nn.Module):
 
         # 2. 双分支处理
 
-        # 光谱分支
+        # 光谱分支 (消融实验：临时禁用)
         x_spec = self.spectral_branch(x_norm)  # (H, W, d_model)
+        #x_spec = torch.zeros(h, w, self.d_model, device=x_norm.device, dtype=x_norm.dtype)
 
-        # 空间分支 (多尺度卷积)
+        # 空间分支 (消融实验：临时禁用)
         # 需要转换为卷积格式: (H, W, bands) -> (bands, H, W) -> (1, bands, H, W)
         x_spat = x_norm.permute(2, 0, 1).unsqueeze(0)  # (1, bands, H, W)
         x_spat = self.spatial_branch(x_spat)  # (1, d_model, H, W)
         x_spat = x_spat.squeeze(0).permute(1, 2, 0)  # (H, W, d_model)
+        #x_spat = torch.zeros(h, w, self.d_model, device=x_norm.device, dtype=x_norm.dtype)
 
         # 3. 拼接
         x_cat = torch.cat([x_spec, x_spat], dim=-1)  # (H, W, 2*d_model)
@@ -123,14 +125,14 @@ class MambaHSINet(nn.Module):
         x_fused = self.fusion(x_fused)  # (1, d_model, H, W)
         x_fused = x_fused.squeeze(0).permute(1, 2, 0)  # (H, W, d_model)
 
-        # 5. Mamba处理（使用封装的 MambaLayer）
+        # 5. Mamba处理 (消融实验：临时禁用)
         # Reshape为序列: (H, W, d_model) -> (1, H*W, d_model)
         x_seq = x_fused.reshape(-1, self.d_model)  # (H*W, d_model)
         x_seq = x_seq.unsqueeze(0)  # (1, H*W, d_model)
-
         # 使用封装层处理（内部包含 Pre-Norm, 双向 S6Core, Dropout, 残差）
         x_mamba = self.mamba(x_seq)
         x_mamba = x_mamba.squeeze(0)  # (H*W, d_model)
+        #x_mamba = x_fused.reshape(-1, self.d_model)  # (H*W, d_model) - 跳过Mamba直接传递
 
         # 6. 分类
         output = self.classifier(x_mamba)  # (H*W, num_classes)
