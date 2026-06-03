@@ -24,6 +24,7 @@ import torch.nn as nn
 from .spatial_branch import SpatialBranchModule
 from .spectral_branch import SpectralBranchModule
 from .mamba_layer import MambaLayer
+from .mamba_layer_single import MambaLayerSingle  # 单向 Mamba 消融实验
 from .fusion import FusionModule
 from .classifier import ClassifierModule
 
@@ -82,8 +83,15 @@ class MambaHSINet(nn.Module):
             d_model * 2, d_model, bias=False, dropout_rate=self.dropout_rate
         )
 
-        # Mamba 层封装（双向 + Pre-Norm + Dropout）
+        # ==================== Mamba 消融实验切换区域 ====================
+        # 使用下方其中一个，注释掉另一个：
+        
+        # 双向 Mamba（默认）
         self.mamba = MambaLayer(d_model=d_model, dropout_rate=self.dropout_rate)
+        
+        # 单向 Mamba（消融实验）
+        # self.mamba = MambaLayerSingle(d_model=d_model, dropout_rate=self.dropout_rate)
+        # ==================== Mamba 消融实验切换区域 ====================
 
         # 分类器（封装为单独模块）
         classifier_hidden = 128  # 隐藏层维度
