@@ -51,7 +51,7 @@ class SpectralBranchModule(nn.Module):
         self.bias = bias
         self.dropout_rate = dropout_rate
         # 减少中间通道数以节省内存：原来是 in_channels//24，现在进一步减少
-        self.conv_channels = max(6, self.in_channels // 24)
+        self.conv_channels = 6
 
         # 对每个像素的光谱序列使用正常 1D 卷积（Conv1d(1 -> C)），然后在通道维度融合
         # 三个尺度的卷积输出中间通道数 self.conv_channels

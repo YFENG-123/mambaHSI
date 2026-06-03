@@ -1,6 +1,7 @@
 import os
 import time
 import torch
+from thop import profile
 from models import MambaHSINet
 from util import (
     load_data,
@@ -22,7 +23,7 @@ from log import Log
 program_start_time = time.time()
 
 ################################# 设置超参数 #################################
-num_epochs = 1000  # 训练轮数
+num_epochs = 5  # 训练轮数
 learning_rate = 5e-3  # 适配 Pre-Norm Residual 结构
 dropout_rate = 0.3
 # 仅在最后 50 个 epoch 开始保存模型；在倒数第50轮（即开始的那一轮）固定保存一次快照
@@ -82,36 +83,32 @@ seeds = [
     25565,
 ]
 image_paths = [
-    #"data/HuaiLai.mat",
     "data/HuaiL_1/HuaiL_1.mat",
     "data/HuaiL_2/HuaiL_2.mat",
-    # "data/1/json_convert_to_mat_resize.mat",
-    # "data/2/HuaiLai.mat",
-    # "data/3/MBY.mat",
-    # "data/4/DHHS.mat",
-    #"data/Botswana.mat",
-    #"data/Indian_pines.mat",
-    #"data/KSC.mat",
     "data/Pavia.mat",
-    #"data/PaviaU.mat",
-    #"data/Salinas.mat",
-    #"data/SalinasA.mat",
+    #"data/WHU-Hi-HanChuan/WHU_Hi_HanChuan.mat",
+    #"data/WHU-Hi-HongHu/WHU_Hi_HongHu.mat",
+    "data/WHU-Hi-LongKou/WHU_Hi_LongKou.mat",
+    # "data/Botswana.mat",
+    # "data/Indian_pines.mat",
+    # "data/KSC.mat",
+    # "data/PaviaU.mat",
+    # "data/Salinas.mat",
+    # "data/SalinasA.mat",
 ]
 gt_paths = [
-    #"data/HuaiLai_gt.mat",
     "data/HuaiL_1/HuaiL_1_gt.mat",
     "data/HuaiL_2/HuaiL_2_gt.mat",
-    # "data/1/matlab",
-    # "data/2/HuaiLai_gt.mat",
-    # "data/3/MBY-gt.mat",
-    # "data/4/DHHS-gt.mat",
-    #"data/Botswana_gt.mat",
-    #"data/Indian_pines_gt.mat",
-    #"data/KSC_gt.mat",
     "data/Pavia_gt.mat",
-    #"data/PaviaU_gt.mat",
-    #"data/Salinas_gt.mat",
-    #"data/SalinasA_gt.mat",
+    #"data/WHU-Hi-HanChuan/WHU_Hi_HanChuan_gt.mat",
+    #"data/WHU-Hi-HongHu/WHU_Hi_HongHu_gt.mat",
+    "data/WHU-Hi-LongKou/WHU_Hi_LongKou_gt.mat",
+    # "data/Botswana_gt.mat",
+    # "data/Indian_pines_gt.mat",
+    # "data/KSC_gt.mat",
+    # "data/PaviaU_gt.mat",
+    # "data/Salinas_gt.mat",
+    # "data/SalinasA_gt.mat",
 ]
 val_split_rate = 0.01  # 验证集比例固定严禁修改！！！
 test_split_rate = 0.98  # 测试集比例固定严禁修改！！！
@@ -208,6 +205,8 @@ print(
 for image_path, gt_path in zip(image_paths, gt_paths):
     data_name = image_path.split("/")[-1].split(".")[0]  # 获取数据集名称
     experiment_results = []  # 存储每个种子的详细结果
+    dataset_flops = None  # 存储当前数据集的 FLOPs 和参数量（仅计算一次）
+    dataset_params = None
     weights_dir = os.path.join(weights_base_dir, data_name)
     images_dir = os.path.join(images_base_dir, data_name)
     os.makedirs(weights_dir, exist_ok=True)
@@ -244,6 +243,14 @@ for image_path, gt_path in zip(image_paths, gt_paths):
         sample_input = image.squeeze(0).to("cuda")
         logger.log_model_graph(model, sample_input)
         print("已将网络结构写入 TensorBoard")
+
+        # 仅在第一个种子时计算 FLOPs 和参数量（同一数据集使用相同模型结构）
+        if seed_idx == 0:
+            flops_input = torch.randn(image_x, image_y, bands).to("cuda")
+            flops, params = profile(model, inputs=(flops_input,))
+            dataset_flops = flops / 1e9
+            dataset_params = params / 1e6
+            print(f"模型 FLOPs: {dataset_flops:.2f} GFLOPs, 参数量: {dataset_params:.2f} M")
         ################################# 创建损失函数 ##################################
         criterion = create_criterion(loss_type, focal_alpha, focal_gamma, class_weights)
         ################################# 创建优化器 ##################################
@@ -296,6 +303,8 @@ for image_path, gt_path in zip(image_paths, gt_paths):
                 full_test_label,
                 train_time,
                 current_lr,
+                allocated_memory,
+                cached_memory,
             ) = run_model(model, train_loader, criterion, optimizer, "train", scheduler)
             logger.each_train(  # 记录每次训练的结果到TensorBoard
                 data_name,
@@ -305,9 +314,11 @@ for image_path, gt_path in zip(image_paths, gt_paths):
                 train_acc,
                 train_time,
                 current_lr,
+                allocated_memory,
+                cached_memory,
             )
             print(  # 打印训练集结果
-                f"    Train -> Loss: {avg_train_loss:.4f}, Accuracy: {train_acc:.2f}%, Time: {train_time:.2f}s"
+                f"    Train -> Loss: {avg_train_loss:.4f}, Accuracy: {train_acc:.2f}%, Time: {train_time:.2f}s, Allocated Memory: {allocated_memory:.2f} MB, Cached Memory: {cached_memory:.2f} MB"
             )
             # 当前学习率在 run_model 中已更新（如提供 scheduler），并作为 current_lr 返回
             print(f"    当前学习率: {current_lr:.6f}")
@@ -344,6 +355,8 @@ for image_path, gt_path in zip(image_paths, gt_paths):
                 full_test_label,
                 val_time,
                 current_lr,
+                allocated_memory,
+                cached_memory,
             ) = run_model(model, val_loader, criterion, optimizer, "val")
             logger.each_val(  # 记录每次验证的结果到TensorBoard
                 data_name,
@@ -352,9 +365,11 @@ for image_path, gt_path in zip(image_paths, gt_paths):
                 avg_val_loss,
                 val_acc,
                 val_time,
+                allocated_memory,
+                cached_memory,
             )
             print(  # 打印验证集结果
-                f"    Val   -> Loss: {avg_val_loss:.4f}, Accuracy: {val_acc:.2f}%, Time: {val_time:.2f}s"
+                f"    Val   -> Loss: {avg_val_loss:.4f}, Accuracy: {val_acc:.2f}%, Time: {val_time:.2f}s, Allocated Memory: {allocated_memory:.2f} MB, Cached Memory: {cached_memory:.2f} MB"
             )
             ############################### 每个epoch保存当前最佳模型 ##################################
             current_epoch = epoch + 1
@@ -409,6 +424,8 @@ for image_path, gt_path in zip(image_paths, gt_paths):
             full_test_label,
             test_time,
             current_lr,
+            allocated_memory,
+            cached_memory,
         ) = run_model(model, test_loader, criterion, optimizer, "test")
         oa, aa, kappa, confusion_matrix, class_accuracies = (  # 计算测试集结果
             calculate_seed_result(
@@ -435,6 +452,7 @@ for image_path, gt_path in zip(image_paths, gt_paths):
         print(f"测试集 OA: {oa:.2f}%")
         print(f"测试集 AA: {aa:.2f}%")
         print(f"测试集 Kappa: {kappa:.2f}")
+        print(f"测试集 已分配显存: {allocated_memory:.2f} MB, 缓存显存: {cached_memory:.2f} MB")
         logger.each_test(  # 记录一个种子的测试结果到TensorBoard
             data_name,
             seed_idx + 1,
@@ -444,6 +462,8 @@ for image_path, gt_path in zip(image_paths, gt_paths):
             (oa + aa + kappa) / 3.0,
             total_training_time,
             class_accuracies,
+            allocated_memory,
+            cached_memory,
         )
         experiment_results.append(  # 统一收集一个种子的所有信息，用于一个数据集所有种子的平均结果计算
             {
@@ -521,6 +541,8 @@ for image_path, gt_path in zip(image_paths, gt_paths):
         std_best_model_acc=std_best_model_acc,
         std_best_model_epoch=std_best_model_epoch,
         num_experiments=len(seeds),
+        dataset_flops=dataset_flops,
+        dataset_params=dataset_params,
     )
 logger.flush()
 logger.close()

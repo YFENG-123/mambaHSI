@@ -46,7 +46,7 @@ class SpatialBranchModule(nn.Module):
         self.out_channels = out_channels
         self.bias = bias
         self.dropout_rate = dropout_rate
-        self.mid_channels = max(6, self.in_channels // 24)
+        self.mid_channels = 6
 
         # 先将多尺度卷积输出到一个中间通道数（mid_channels），再通过1x1融合到目标输出通道
         self.conv3 = nn.Sequential(

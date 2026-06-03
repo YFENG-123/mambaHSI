@@ -47,6 +47,8 @@ class Log:
         train_acc,
         train_time,
         current_lr,
+        allocated_memory,
+        cached_memory,
     ):
         """
         记录每次训练的结果到TensorBoard
@@ -81,7 +83,13 @@ class Log:
             epoch,
         )
 
-    def each_val(self, data_name, seed_idx, epoch, avg_val_loss, val_acc, val_time):
+        self.writer.add_scalars(
+            f"GPU_Memory_{self.timestamp}_{data_name}",
+            {f"Train_Alloc_MB_{seed_idx}": allocated_memory, f"Train_Cached_MB_{seed_idx}": cached_memory},
+            epoch,
+        )
+
+    def each_val(self, data_name, seed_idx, epoch, avg_val_loss, val_acc, val_time, allocated_memory, cached_memory):
         """
         记录每次验证的结果到TensorBoard
 
@@ -92,6 +100,8 @@ class Log:
             avg_val_loss: 平均验证损失
             val_acc: 验证准确率
             val_time: 验证时间
+            allocated_memory: 已分配显存
+            cached_memory: 缓存显存
         """
         # 与 train 保持一致的 tag 风格，便于在 TensorBoard 中对比 Train/Val
         self.writer.add_scalars(
@@ -105,7 +115,11 @@ class Log:
             {f"Val_Acc_{seed_idx}": val_acc},
             epoch,
         )
-
+        self.writer.add_scalars(
+            f"GPU_Memory_{self.timestamp}_{data_name}",
+            {f"Val_Alloc_MB_{seed_idx}": allocated_memory, f"Val_Cached_MB_{seed_idx}": cached_memory},
+            epoch,
+        )
         self.writer.add_scalars(
             f"Time_{self.timestamp}_{data_name}",
             {f"Val_{seed_idx}": val_time},
@@ -122,6 +136,8 @@ class Log:
         performance,
         total_training_time,
         class_accuracies,
+        allocated_memory,
+        cached_memory,
     ):
         """
         记录每次测试的结果到TensorBoard
@@ -135,6 +151,8 @@ class Log:
             performance: 性能指标 (oa + aa + kappa) / 3.0
             total_training_time: 总训练时间
             class_accuracies: 各类别精度列表
+            allocated_memory: 已分配显存
+            cached_memory: 缓存显存
         """
         # 使用 log copy 的风格：将 OA/AA/Kappa/Performance 合并到一张图（便于对比），并记录训练时间单独图
         self.writer.add_scalars(
@@ -152,7 +170,11 @@ class Log:
             {data_name: total_training_time},
             seed_idx,  # x轴：种子序号
         )
-
+        self.writer.add_scalars(
+            f"GPU_Memory_{self.timestamp}_{data_name}",
+            {f"Test_Alloc_MB_{seed_idx}": allocated_memory, f"Test_Cached_MB_{seed_idx}": cached_memory},
+            seed_idx,
+        )
         # 每个类别的精度，tag 包含 data_name，series 为 Seed_{seed_idx}
         for i, acc in enumerate(class_accuracies):
             self.writer.add_scalars(

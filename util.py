@@ -262,6 +262,8 @@ def step(model, loader, criterion, optimizer, mode, scheduler=None):
     total_loss = 0.0
     correct_label = 0
     total_label = 0
+    allocated_memory = 0.0
+    cached_memory = 0.0
     all_predictions = []
     all_label_masked = []
     # 用于保存整个图像的预测结果（仅在测试模式下）
@@ -275,6 +277,10 @@ def step(model, loader, criterion, optimizer, mode, scheduler=None):
 
         # 获取模型输出
         outputs = model(image)
+
+        torch.cuda.synchronize()
+        allocated_memory = torch.cuda.memory_allocated("cuda") / (1024 ** 2)
+        cached_memory = torch.cuda.memory_reserved("cuda") / (1024 ** 2)
 
         # 拉平数据
         outputs_flatten = outputs.flatten(start_dim=0, end_dim=1)
@@ -330,6 +336,8 @@ def step(model, loader, criterion, optimizer, mode, scheduler=None):
         full_test_label,
         elapsed_time,
         current_lr,
+        allocated_memory,
+        cached_memory,
     )
 
 
@@ -945,6 +953,8 @@ def write_results_to_txt(  # 将实验结果写入txt文件
     std_best_model_acc,
     std_best_model_epoch,
     num_experiments,
+    dataset_flops=None,
+    dataset_params=None,
 ):
     """
     将实验结果以表格形式写入txt文件（以追加方式打开）
@@ -968,6 +978,8 @@ def write_results_to_txt(  # 将实验结果写入txt文件
         average_oa, average_aa, average_kappa, average_performance, average_training_time, average_test_loss, average_best_model_loss, average_best_model_acc, average_best_model_epoch: 平均值
         std_oa, std_aa, std_kappa, std_performance, std_training_time, std_test_loss, std_best_model_loss, std_best_model_acc, std_best_model_epoch: 标准差
         num_experiments: 种子数量
+        dataset_flops: 模型 FLOPs (GFLOPs)
+        dataset_params: 模型参数量 (M)
     """
     # 以追加方式打开文件
     results_file = open(results_txt_path, "a", encoding="utf-8")
@@ -978,6 +990,12 @@ def write_results_to_txt(  # 将实验结果写入txt文件
         f"数据集: {data_name} - 实验结果汇总 (共{num_experiments}个种子)\n"
     )
     results_file.write(f"{'=' * 120}\n\n")
+
+    # 写入模型 FLOPs 和参数量
+    if dataset_flops is not None and dataset_params is not None:
+        results_file.write("模型复杂度:\n")
+        results_file.write(f"  FLOPs: {dataset_flops:.2f} GFLOPs\n")
+        results_file.write(f"  参数量: {dataset_params:.2f} M\n\n")
 
     # 主指标表格（包含最佳模型信息）
     results_file.write("主要指标对比表:\n")
